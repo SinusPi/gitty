@@ -306,11 +306,91 @@ final class RepoBrowser
         $selectedCommand = $_GET['command'] ?? null;
 
         if (is_string($selectedRepo) && $selectedRepo !== '' && is_string($selectedCommand)) {
-            $this->renderRepoDetail($selectedRepo, $selectedCommand, $repos);
-            return;
+            $resolvedRepo = $this->resolveRepoFromSelector($selectedRepo, $repos);
+            if ($resolvedRepo !== null) {
+                $this->renderRepoDetail($resolvedRepo, $selectedCommand, $repos);
+                return;
+            }
         }
 
         $this->renderRepoList($repos);
+    }
+
+    private function resolveRepoFromSelector(string $selector, array $repos): ?GitRepo
+    {
+        $trimmed = trim($selector);
+        if ($trimmed === '' || str_contains($trimmed, ':') || str_starts_with($trimmed, '/') || str_starts_with($trimmed, '\\')) {
+            return null;
+        }
+
+        $parts = preg_split('#[\\/]+#', $trimmed) ?: [];
+        $parts = array_values(array_filter($parts, static fn (string $part): bool => $part !== ''));
+        if ($parts === []) {
+            return null;
+        }
+
+        $rootIndex = (int) ($parts[0] ?? 0);
+        if ($rootIndex < 1 || $rootIndex > count($this->configuredRoots)) {
+            return null;
+        }
+
+        array_shift($parts);
+        $relative = implode(DIRECTORY_SEPARATOR, $parts);
+        $rootPath = GitRepo::normalizePath($this->configuredRoots[$rootIndex - 1]);
+        $candidatePath = $relative === '' ? $rootPath : GitRepo::normalizePath($rootPath . DIRECTORY_SEPARATOR . $relative);
+
+        foreach ($repos as $repo) {
+            $repoPath = GitRepo::normalizePath($repo->getPath());
+            $displayPath = GitRepo::normalizePath($repo->getDisplayPath());
+            if ($repoPath === $candidatePath || $displayPath === $candidatePath) {
+                return $repo;
+            }
+        }
+
+        return null;
+    }
+
+    private function getRepoSelector(GitRepo $repo): string
+    {
+        $repoPath = GitRepo::normalizePath($repo->getDisplayPath());
+
+        foreach ($this->configuredRoots as $index => $root) {
+            $rootPath = GitRepo::normalizePath((string) $root);
+            if ($rootPath !== '' && str_starts_with($repoPath, $rootPath . DIRECTORY_SEPARATOR)) {
+                $relative = substr($repoPath, strlen($rootPath) + 1);
+                return ($index + 1) . '/' . str_replace('\\', '/', $relative);
+            }
+        }
+
+        return '1/' . str_replace('\\', '/', basename($repoPath));
+    }
+
+    private function getRelativeDisplayPath(GitRepo $repo): string
+    {
+        $repoPath = GitRepo::normalizePath($repo->getDisplayPath());
+
+        foreach ($this->configuredRoots as $root) {
+            $rootPath = GitRepo::normalizePath((string) $root);
+            if ($rootPath !== '' && str_starts_with($repoPath, $rootPath . DIRECTORY_SEPARATOR)) {
+                $relative = substr($repoPath, strlen($rootPath) + 1);
+                return str_replace('\\', '/', $relative);
+            }
+        }
+
+        return str_replace('\\', '/', basename($repoPath));
+    }
+
+    private function getRepoRootLabel(int $rootIndex): string
+    {
+        $root = $this->configuredRoots[$rootIndex] ?? '';
+        $normalized = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, (string) $root), DIRECTORY_SEPARATOR);
+        $name = basename($normalized);
+
+        if ($name === '' || $name === '.' || $name === DIRECTORY_SEPARATOR) {
+            return 'root ' . ($rootIndex + 1);
+        }
+
+        return $name;
     }
 
     private function renderRepoList(array $repos): void
@@ -353,7 +433,7 @@ final class RepoBrowser
             return;
         }
 
-        foreach ($this->configuredRoots as $root) {
+        foreach ($this->configuredRoots as $rootIndex => $root) {
             $rootRepos = array_values(array_filter($repos, function (GitRepo $repo) use ($root): bool {
                 $displayPath = str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $repo->getDisplayPath());
                 $rootPath = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $root), DIRECTORY_SEPARATOR);
@@ -364,7 +444,7 @@ final class RepoBrowser
                 continue;
             }
 
-            echo '<div class="repo-root-header">Repo root: ' . htmlspecialchars($root, ENT_QUOTES, 'UTF-8') . '</div>';
+            echo '<div class="repo-root-header">Repo root ' . ($rootIndex + 1) . ': ' . htmlspecialchars($this->getRepoRootLabel($rootIndex), ENT_QUOTES, 'UTF-8') . '</div>';
             $tree = $this->buildTree($rootRepos);
             echo '<ul class="repo-tree">';
             foreach ($tree as $node) {
@@ -476,10 +556,10 @@ final class RepoBrowser
             }
 
             foreach ($node['repos'] as $repo) {
-                $detailHref = '?repo=' . rawurlencode($repo->getPath()) . '&amp;command=branch';
+                $detailHref = '?repo=' . rawurlencode($this->getRepoSelector($repo)) . '&amp;command=branch';
                 echo '<li class="repo-item" tabindex="0" role="button" onclick="window.location.href=\'' . addslashes($detailHref) . '\';" onkeydown="if (event.key === \"Enter\" || event.key === \" \") { event.preventDefault(); window.location.href=\'' . addslashes($detailHref) . '\'; }">';
                 echo '<div class="repo-name">' . htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') . '</div>';
-                echo '<div class="repo-meta">' . htmlspecialchars($repo->getDisplayPath(), ENT_QUOTES, 'UTF-8') . '</div>';
+                echo '<div class="repo-meta">' . htmlspecialchars($this->getRelativeDisplayPath($repo), ENT_QUOTES, 'UTF-8') . '</div>';
                 echo $this->renderRepoMeta($repo);
                 echo '</li>';
             }
@@ -490,33 +570,21 @@ final class RepoBrowser
         }
 
         foreach ($node['repos'] as $repo) {
-            $detailHref = '?repo=' . rawurlencode($repo->getPath()) . '&amp;command=branch';
+            $detailHref = '?repo=' . rawurlencode($this->getRepoSelector($repo)) . '&amp;command=branch';
             echo '<li class="repo-item" tabindex="0" role="button" onclick="window.location.href=\'' . addslashes($detailHref) . '\';" onkeydown="if (event.key === \"Enter\" || event.key === \" \") { event.preventDefault(); window.location.href=\'' . addslashes($detailHref) . '\'; }">';
             echo '<div class="repo-name">' . htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') . '</div>';
-            echo '<div class="repo-meta">' . htmlspecialchars($repo->getDisplayPath(), ENT_QUOTES, 'UTF-8') . '</div>';
+            echo '<div class="repo-meta">' . htmlspecialchars($this->getRelativeDisplayPath($repo), ENT_QUOTES, 'UTF-8') . '</div>';
             echo $this->renderRepoMeta($repo);
             echo '</li>';
         }
     }
 
-    private function renderRepoDetail(string $repoPath, string $command, array $repos): void
+    private function renderRepoDetail(GitRepo $repo, string $command, array $repos): void
     {
-        $repo = null;
-        $normalizedRepoPath = GitRepo::normalizePath($repoPath);
-        foreach ($repos as $candidate) {
-            if (GitRepo::normalizePath($candidate->getPath()) === $normalizedRepoPath) {
-                $repo = $candidate;
-                break;
-            }
-        }
-
-        if ($repo === null) {
-            http_response_code(404);
-            echo 'Repository not found.';
-            return;
-        }
-
         $repoData = $repo->getDetailData();
+        $repoData['repo_path'] = $this->getRepoSelector($repo);
+        $repoData['display_path'] = $this->getRelativeDisplayPath($repo);
+
         $selectedBranch = $repoData['head_branch'];
         $selectedMode = 'branch';
 
@@ -528,7 +596,7 @@ final class RepoBrowser
             $selectedMode = $_GET['mode'];
         }
 
-        $detailUrlBase = '?repo=' . rawurlencode($repo->getPath()) . '&amp;command=branch';
+        $detailUrlBase = '?repo=' . rawurlencode($this->getRepoSelector($repo)) . '&amp;command=branch';
         $branchCommits = $repoData['commits_by_branch'][$selectedBranch] ?? $repo->getBranchCommits($selectedBranch, 30);
 
         echo '<!DOCTYPE html>';
@@ -578,9 +646,8 @@ final class RepoBrowser
         echo '<a class="button' . ($selectedMode === 'tree' ? ' is-active' : '') . '" href="' . $treeUrl . '">Tree</a>';
         echo '</div>';
 
-        echo '<div class="mode-label">Primary mode</div>';
-        echo '<div class="box">';
-        echo '<p><strong>Repository:</strong> ' . htmlspecialchars($repoData['display_path'], ENT_QUOTES, 'UTF-8') . '</p>';
+        echo '<div class="box" style="margin-top: 1rem;">';
+        echo '<p><strong>Repository:</strong> ' . htmlspecialchars((string) $repoData['display_path'], ENT_QUOTES, 'UTF-8') . '</p>';
         echo '<p><strong>Selected branch:</strong> ' . htmlspecialchars($selectedBranch, ENT_QUOTES, 'UTF-8') . '</p>';
         echo '</div>';
 
@@ -701,20 +768,21 @@ function stripConfiguredRootForCli(string $path, array $repoRoots): string
     return $normalized;
 }
 
-function printCliTreeNode(array $node, int $depth): void
+function printCliTreeNode(array $node, int $depth, array $repoRoots): void
 {
     $indent = str_repeat('  ', $depth);
 
     if (!empty($node['children'])) {
         echo $indent . $node['name'] . PHP_EOL;
         foreach ($node['children'] as $child) {
-            printCliTreeNode($child, $depth + 1);
+            printCliTreeNode($child, $depth + 1, $repoRoots);
         }
     }
 
     foreach ($node['repos'] as $repo) {
         $displayName = $repo->getDisplayName();
         $displayPath = $repo->getDisplayPath();
+        $relativePath = stripConfiguredRootForCli($displayPath, $repoRoots);
         $commitCount = $repo->getCommitCount();
         $lastCommit = $repo->getLastCommit();
 
@@ -722,8 +790,53 @@ function printCliTreeNode(array $node, int $depth): void
             ? $lastCommit['author'] . ' • ' . $lastCommit['date'] . ' • ' . $lastCommit['subject']
             : 'No commits yet';
 
-        echo $indent . '- ' . $displayName . ' [' . $displayPath . '] (commits: ' . $commitCount . ', last: ' . $lastCommitText . ')' . PHP_EOL;
+        echo $indent . '- ' . $displayName . ' [' . $relativePath . '] (commits: ' . $commitCount . ', last: ' . $lastCommitText . ')' . PHP_EOL;
     }
+}
+
+function formatRepoRootLabel(array $repoRoots, int $index): string
+{
+    $root = $repoRoots[$index] ?? '';
+    $normalized = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, (string) $root), DIRECTORY_SEPARATOR);
+    $name = basename($normalized);
+
+    if ($name === '' || $name === '.' || $name === DIRECTORY_SEPARATOR) {
+        return 'root ' . ($index + 1);
+    }
+
+    return $name;
+}
+
+function resolveRepoSelector(string $selector, array $repos, array $repoRoots): ?GitRepo
+{
+    $trimmed = trim($selector);
+    if ($trimmed === '' || str_contains($trimmed, ':') || str_starts_with($trimmed, '/') || str_starts_with($trimmed, '\\')) {
+        return null;
+    }
+
+    $parts = preg_split('#[\\/]+#', $trimmed) ?: [];
+    $parts = array_values(array_filter($parts, static fn (string $part): bool => $part !== ''));
+    if ($parts === []) {
+        return null;
+    }
+
+    $rootIndex = (int) ($parts[0] ?? 0);
+    if ($rootIndex < 1 || $rootIndex > count($repoRoots)) {
+        return null;
+    }
+
+    array_shift($parts);
+    $relative = implode(DIRECTORY_SEPARATOR, $parts);
+    $rootPath = GitRepo::normalizePath($repoRoots[$rootIndex - 1]);
+    $candidatePath = $relative === '' ? $rootPath : GitRepo::normalizePath($rootPath . DIRECTORY_SEPARATOR . $relative);
+
+    foreach ($repos as $repo) {
+        if (GitRepo::normalizePath($repo->getPath()) === $candidatePath) {
+            return $repo;
+        }
+    }
+
+    return null;
 }
 
 function normalizeConfiguredRoots(string|array|null $roots): array
@@ -791,23 +904,23 @@ function runCliMode(array $argv): void
 
     if ($arguments === [] || in_array('--list', $arguments, true)) {
         echo 'Configured repo roots:' . PHP_EOL;
-        foreach ($repoRoots as $root) {
-            echo ' - ' . $root . PHP_EOL;
+        foreach ($repoRoots as $index => $root) {
+            echo ' - ' . ($index + 1) . ' (' . formatRepoRootLabel($repoRoots, $index) . ')' . PHP_EOL;
         }
 
         echo PHP_EOL . 'Found repositories (' . count($repos) . '):' . PHP_EOL;
         $groups = buildRootGroups($repos, $repoRoots);
 
-        foreach ($repoRoots as $root) {
+        foreach ($repoRoots as $index => $root) {
             $rootRepos = $groups[$root] ?? [];
             if ($rootRepos === []) {
                 continue;
             }
 
-            echo 'Repo root: ' . $root . PHP_EOL;
+            echo 'Repo root: ' . ($index + 1) . ' (' . formatRepoRootLabel($repoRoots, $index) . ')' . PHP_EOL;
             $tree = buildCliTree($rootRepos, [$root]);
             foreach ($tree as $node) {
-                printCliTreeNode($node, 1);
+                printCliTreeNode($node, 1, $repoRoots);
             }
             echo PHP_EOL;
         }
@@ -835,8 +948,8 @@ function runCliMode(array $argv): void
         if ($value === '--help' || $value === '-h') {
             echo "Usage:\n";
             echo "  php index.php --list\n";
-            echo "  php index.php --repo \"/path/to/repo.git\" --command branch\n";
-            echo "  php index.php --repo \"/path/to/repo.git\" --command log\n";
+            echo "  php index.php --repo \"1/apples/cider apples/sour two\" --command branch\n";
+            echo "  php index.php --repo \"1/apples/cider apples/sour two\" --command log\n";
             return;
         }
     }
@@ -846,11 +959,14 @@ function runCliMode(array $argv): void
         return;
     }
 
-    $matchedRepo = null;
-    foreach ($repos as $repo) {
-        if ($repo->getPath() === $repoPath) {
-            $matchedRepo = $repo;
-            break;
+    $matchedRepo = resolveRepoSelector($repoPath, $repos, $repoRoots);
+    if ($matchedRepo === null && $repoPath !== '') {
+        $matchedRepo = null;
+        foreach ($repos as $repo) {
+            if ($repo->getPath() === GitRepo::normalizePath($repoPath)) {
+                $matchedRepo = $repo;
+                break;
+            }
         }
     }
 
