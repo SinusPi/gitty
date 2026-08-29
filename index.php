@@ -8,9 +8,15 @@ final class GitRepo
     {
     }
 
+    public static function normalizePath(string $path): string
+    {
+        $normalized = str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $path);
+        return rtrim($normalized, DIRECTORY_SEPARATOR);
+    }
+
     public function getPath(): string
     {
-        return $this->path;
+        return self::normalizePath($this->path);
     }
 
     public function getDisplayPath(): string
@@ -47,6 +53,84 @@ final class GitRepo
     public function getLogOutput(): string
     {
         return GitCommandRunner::run($this->path, ['log', '--oneline', '-n', '20']);
+    }
+
+    public function getBranches(): array
+    {
+        [$output, $status] = GitCommandRunner::runWithStatus($this->path, ['branch', '--format=%(refname:short)']);
+
+        if ($status !== 0 || trim($output) === '') {
+            return [];
+        }
+
+        $branches = preg_split('/\r\n|\r|\n/', $output) ?: [];
+        return array_values(array_values(array_filter(array_map('trim', $branches), static fn (string $branch): bool => $branch !== '')));
+    }
+
+    public function getHeadBranch(): string
+    {
+        [$output, $status] = GitCommandRunner::runWithStatus($this->path, ['rev-parse', '--abbrev-ref', 'HEAD']);
+
+        if ($status !== 0 || trim($output) === '') {
+            return 'HEAD';
+        }
+
+        return trim($output);
+    }
+
+    public function getBranchCommits(string $branch, int $limit = 30): array
+    {
+        $ref = $branch !== '' ? $branch : 'HEAD';
+        [$output, $status] = GitCommandRunner::runWithStatus($this->path, ['log', '--pretty=format:%H%x1f%an%x1f%ad%x1f%s', '--date=iso-strict', '-n', (string) $limit, $ref]);
+
+        if ($status !== 0 || trim($output) === '') {
+            return [];
+        }
+
+        $commits = [];
+        foreach (preg_split('/\r\n|\r|\n/', $output) ?: [] as $line) {
+            $parts = explode("\x1f", $line);
+            if (count($parts) < 4) {
+                continue;
+            }
+
+            $commits[] = [
+                'hash' => trim((string) $parts[0]),
+                'author' => trim((string) $parts[1]),
+                'date' => trim((string) $parts[2]),
+                'message' => trim((string) $parts[3]),
+            ];
+        }
+
+        return $commits;
+    }
+
+    public function getDetailData(): array
+    {
+        $branches = $this->getBranches();
+        $headBranch = $this->getHeadBranch();
+
+        if ($branches === []) {
+            $branches = [$headBranch !== '' ? $headBranch : 'HEAD'];
+        }
+
+        if (!in_array($headBranch, $branches, true)) {
+            $headBranch = $branches[0] ?? 'HEAD';
+        }
+
+        $commitsByBranch = [];
+        foreach ($branches as $branch) {
+            $commitsByBranch[$branch] = $this->getBranchCommits($branch, 30);
+        }
+
+        return [
+            'repo_path' => $this->path,
+            'display_name' => $this->getDisplayName(),
+            'display_path' => $this->getDisplayPath(),
+            'head_branch' => $headBranch,
+            'branches' => $branches,
+            'commits_by_branch' => $commitsByBranch,
+        ];
     }
 
     public function getCommitCount(): int
@@ -180,8 +264,9 @@ final class GitRepoScanner
 
             $repoPath = $item->getPathname();
 
-            if ($this->isBareGitRepo($repoPath) && !isset($repos[$repoPath])) {
-                $repos[$repoPath] = new GitRepo($repoPath);
+            $normalizedRepoPath = GitRepo::normalizePath($repoPath);
+            if ($this->isBareGitRepo($repoPath) && !isset($repos[$normalizedRepoPath])) {
+                $repos[$normalizedRepoPath] = new GitRepo($repoPath);
             }
         }
     }
@@ -417,8 +502,9 @@ final class RepoBrowser
     private function renderRepoDetail(string $repoPath, string $command, array $repos): void
     {
         $repo = null;
+        $normalizedRepoPath = GitRepo::normalizePath($repoPath);
         foreach ($repos as $candidate) {
-            if ($candidate->getPath() === $repoPath) {
+            if (GitRepo::normalizePath($candidate->getPath()) === $normalizedRepoPath) {
                 $repo = $candidate;
                 break;
             }
@@ -430,49 +516,103 @@ final class RepoBrowser
             return;
         }
 
-        $output = match ($command) {
-            'branch' => $repo->getBranchOutput(),
-            'log' => $repo->getLogOutput(),
-            default => 'Unsupported command. Allowed values: branch, log.',
-        };
+        $repoData = $repo->getDetailData();
+        $selectedBranch = $repoData['head_branch'];
+        $selectedMode = 'branch';
+
+        if (isset($_GET['branch']) && is_string($_GET['branch']) && $_GET['branch'] !== '') {
+            $selectedBranch = $_GET['branch'];
+        }
+
+        if (isset($_GET['mode']) && is_string($_GET['mode']) && $_GET['mode'] !== '') {
+            $selectedMode = $_GET['mode'];
+        }
+
+        $detailUrlBase = '?repo=' . rawurlencode($repo->getPath()) . '&amp;command=branch';
+        $branchCommits = $repoData['commits_by_branch'][$selectedBranch] ?? $repo->getBranchCommits($selectedBranch, 30);
 
         echo '<!DOCTYPE html>';
         echo '<html lang="en">';
         echo '<head>';
         echo '<meta charset="UTF-8">';
         echo '<meta name="viewport" content="width=device-width, initial-scale=1.0">';
-        echo '<title>' . htmlspecialchars($repo->getName(), ENT_QUOTES, 'UTF-8') . ' - Git output</title>';
+        echo '<title>Git Repo Browser</title>';
         echo '<style>';
         echo 'body { font-family: Arial, sans-serif; margin: 2rem; background: #f4f5f7; color: #222; }';
         echo 'a { color: #0a58ca; text-decoration: none; }';
+        echo '.layout { max-width: 1120px; }';
+        echo '.page-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }';
         echo '.box { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 1rem; }';
-        echo '.actions { display: flex; gap: 0.5rem; margin-bottom: 1rem; }';
-        echo '.button { display: inline-block; padding: 0.55rem 0.9rem; border-radius: 6px; background: #0d6efd; color: #fff; }';
-        echo 'pre { white-space: pre-wrap; word-break: break-word; background: #111827; color: #f9fafb; border-radius: 8px; padding: 1rem; overflow: auto; }';
+        echo '.toolbar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }';
+        echo '.branch-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }';
+        echo '.branch-button { display: inline-block; border: 1px solid #d6d9df; background: #fff; padding: 0.45rem 0.8rem; border-radius: 999px; text-decoration: none; font: inherit; color: #111827; }';
+        echo '.branch-button.is-selected { background: #dbeafe; border-color: #60a5fa; font-weight: 700; }';
+        echo '.button { display: inline-block; border: 1px solid #d7ddf6; background: #eef2ff; color: #1f2a44; border-radius: 6px; padding: 0.7rem 1rem; text-decoration: none; font: inherit; }';
+        echo '.button.is-active { background: #0d6efd; color: #fff; border-color: #0d6efd; }';
+        echo '.mode-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: #475569; margin: 1rem 0 0.5rem; font-weight: 700; }';
+        echo '.commit-box { max-height: 420px; overflow-y: auto; border: 1px solid #d6d9df; border-radius: 8px; background: #fff; }';
+        echo '.commit-row { display: grid; grid-template-columns: 100px 200px 220px 1fr; gap: 0.85rem; padding: 0.8rem 1rem; border-bottom: 1px solid #eef2f7; }';
+        echo '.commit-row:last-child { border-bottom: 0; }';
+        echo '.commit-hash { font-family: Consolas, monospace; font-size: 0.82rem; color: #1f2937; }';
+        echo '.commit-meta { color: #4b5563; font-size: 0.82rem; }';
+        echo '.commit-message { font-weight: 600; color: #111827; word-break: break-word; }';
+        echo '.placeholder { padding: 1rem; color: #475569; background: #f8fafc; border: 1px solid #dbe2ed; border-radius: 8px; }';
         echo '</style>';
         echo '</head>';
         echo '<body>';
+        echo '<div class="layout">';
+        echo '<div class="page-header">';
         echo '<p><a href="./">← Back to repo list</a></p>';
-        echo '<h1>' . htmlspecialchars($repo->getName(), ENT_QUOTES, 'UTF-8') . '</h1>';
-        echo '<div class="actions">';
-        echo '<a class="button" href="?repo=' . rawurlencode($repo->getPath()) . '&amp;command=branch">Branch</a>';
-        echo '<a class="button" href="?repo=' . rawurlencode($repo->getPath()) . '&amp;command=log">Log</a>';
+        echo '<h1>' . htmlspecialchars($repoData['display_name'], ENT_QUOTES, 'UTF-8') . '</h1>';
         echo '</div>';
-        $commitCount = $repo->getCommitCount();
-        $lastCommit = $repo->getLastCommit();
 
-        echo '<div class="box">';
-        echo '<p><strong>Repository:</strong> ' . htmlspecialchars($repo->getPath(), ENT_QUOTES, 'UTF-8') . '</p>';
-        echo '<p><strong>Commits:</strong> ' . (int) $commitCount . '</p>';
-        if ($lastCommit['exists']) {
-            echo '<p><strong>Last commit:</strong> ' . htmlspecialchars($lastCommit['author'] . ' • ' . $lastCommit['date'] . ' • ' . $lastCommit['subject'], ENT_QUOTES, 'UTF-8') . '</p>';
-            echo '<p title="' . htmlspecialchars($lastCommit['full_message'], ENT_QUOTES, 'UTF-8') . '"><strong>Full message:</strong> ' . htmlspecialchars($lastCommit['full_message'], ENT_QUOTES, 'UTF-8') . '</p>';
-        } else {
-            echo '<p><strong>Last commit:</strong> No commits yet</p>';
+        echo '<div class="toolbar box">';
+        echo '<div class="branch-list" id="branch-list" aria-label="Branches">';
+        foreach ($repoData['branches'] as $branch) {
+            $isSelected = $branch === $selectedBranch;
+            $branchUrl = $detailUrlBase . '&amp;branch=' . rawurlencode($branch) . '&amp;mode=branch';
+            echo '<a class="branch-button' . ($isSelected ? ' is-selected' : '') . '" href="' . $branchUrl . '" aria-pressed="' . ($isSelected ? 'true' : 'false') . '">' . htmlspecialchars($branch, ENT_QUOTES, 'UTF-8') . '</a>';
         }
-        echo '<p><strong>Command:</strong> ' . htmlspecialchars($command, ENT_QUOTES, 'UTF-8') . '</p>';
-        echo '<pre>' . htmlspecialchars($output, ENT_QUOTES, 'UTF-8') . '</pre>';
         echo '</div>';
+        $treeUrl = $detailUrlBase . '&amp;branch=' . rawurlencode($selectedBranch) . '&amp;mode=tree';
+        echo '<a class="button' . ($selectedMode === 'tree' ? ' is-active' : '') . '" href="' . $treeUrl . '">Tree</a>';
+        echo '</div>';
+
+        echo '<div class="mode-label">Primary mode</div>';
+        echo '<div class="box">';
+        echo '<p><strong>Repository:</strong> ' . htmlspecialchars($repoData['display_path'], ENT_QUOTES, 'UTF-8') . '</p>';
+        echo '<p><strong>Selected branch:</strong> ' . htmlspecialchars($selectedBranch, ENT_QUOTES, 'UTF-8') . '</p>';
+        echo '</div>';
+
+        echo '<div class="box" style="margin-top: 1rem;">';
+        if ($selectedMode === 'tree') {
+            echo '<div class="placeholder">Tree mode is not implemented yet. Git commit graph output will appear here in a future update.</div>';
+        } else {
+            echo '<div class="commit-box" id="commit-list" aria-live="polite">';
+            if ($branchCommits === []) {
+                echo '<div class="placeholder">No commits available for this branch yet.</div>';
+            } else {
+                foreach ($branchCommits as $commit) {
+                    $hash = (string) ($commit['hash'] ?? '');
+                    $author = (string) ($commit['author'] ?? 'unknown');
+                    $date = (string) ($commit['date'] ?? 'unknown');
+                    $message = (string) ($commit['message'] ?? '(no message)');
+                    echo '<div class="commit-row">';
+                    echo '<div class="commit-hash">' . htmlspecialchars(substr($hash, 0, 8), ENT_QUOTES, 'UTF-8') . '</div>';
+                    echo '<div class="commit-meta">' . htmlspecialchars($author, ENT_QUOTES, 'UTF-8') . '</div>';
+                    echo '<div class="commit-meta">' . htmlspecialchars($date, ENT_QUOTES, 'UTF-8') . '</div>';
+                    echo '<div class="commit-message">' . htmlspecialchars($message, ENT_QUOTES, 'UTF-8') . '</div>';
+                    echo '</div>';
+                }
+            }
+            echo '</div>';
+        }
+        echo '</div>';
+
+        echo '<script type="application/json" id="repo-data">' . json_encode($repoData, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) . '</script>';
+        echo '<script>';
+        echo 'const selectedBranch = ' . json_encode($selectedBranch, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) . ';';
+        echo '</script>';
         echo '</body>';
         echo '</html>';
     }
@@ -603,7 +743,13 @@ function normalizeConfiguredRoots(string|array|null $roots): array
             continue;
         }
 
-        $normalized[] = $trimmed;
+        $resolved = $trimmed;
+        if (!preg_match('/^[A-Za-z]:[\\\\\/]/', $trimmed) && !str_starts_with($trimmed, '\\\\') && !str_starts_with($trimmed, '/')) {
+            $relative = ltrim($trimmed, '.\\/');
+            $resolved = __DIR__ . DIRECTORY_SEPARATOR . $relative;
+        }
+
+        $normalized[] = GitRepo::normalizePath($resolved);
     }
 
     return array_values(array_unique($normalized));
