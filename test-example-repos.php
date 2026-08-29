@@ -11,15 +11,24 @@ putenv('GITTY_REPO_ROOTS=' . $repoRoots);
 
 $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/index.php') . ' --list';
 $output = [];
-exec($command, $output);
+exec($command, $output, $status);
 $outputText = implode(PHP_EOL, $output);
 
+if ($status !== 0) {
+    fwrite(STDERR, "CLI command failed with exit code {$status}.\nOutput:\n{$outputText}\n");
+    exit($status);
+}
+
+echo "CLI output:\n" . $outputText . "\n";
+
 $expected = [
+    'apples',
     'golden-delicious',
     'granny-smith',
     'banana',
     'cabbage',
     'carrot',
+    'cider apples',
     'sour two',
     'tart one',
 ];

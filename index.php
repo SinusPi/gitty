@@ -13,47 +13,30 @@ final class GitRepo
         return $this->path;
     }
 
-    public function getName(): string
+    public function getDisplayPath(): string
     {
-        $name = basename($this->path);
-
-        if ($name === '.git') {
-            return basename(dirname($this->path));
+        if (basename($this->path) === '.git') {
+            return dirname($this->path);
         }
 
-        if (str_ends_with($name, '.git')) {
-            return substr($name, 0, -4);
+        return $this->path;
+    }
+
+    public function getName(): string
+    {
+        $displayPath = $this->getDisplayPath();
+        $name = basename($displayPath);
+
+        if ($name === '.git') {
+            return basename(dirname($displayPath));
         }
 
         return $name;
     }
 
-    public function getDisplayName(array $repos = []): string
+    public function getDisplayName(): string
     {
-        $name = $this->getName();
-
-        if ($repos === []) {
-            return $name;
-        }
-
-        $sameFolderCount = 0;
-        $folderName = basename(dirname($this->path));
-
-        foreach ($repos as $repo) {
-            if ($repo->getPath() === $this->path) {
-                continue;
-            }
-
-            if (dirname($repo->getPath()) === dirname($this->path)) {
-                $sameFolderCount++;
-            }
-        }
-
-        if ($sameFolderCount > 0) {
-            return $folderName;
-        }
-
-        return $name;
+        return $this->getName();
     }
 
     public function getBranchOutput(): string
@@ -193,8 +176,15 @@ final class RepoBrowser
         echo '<style>';
         echo 'body { font-family: Arial, sans-serif; margin: 2rem; background: #f4f5f7; color: #222; }';
         echo 'h1 { margin-bottom: 1rem; }';
-        echo '.repo-list { list-style: none; padding: 0; max-width: 900px; }';
-        echo '.repo-item { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem; }';
+        echo '.repo-root-header { margin: 1.5rem 0 0.75rem; font-size: 1.1rem; font-weight: 700; }';
+        echo '.repo-tree { list-style: none; padding-left: 0; max-width: 900px; }';
+        echo '.tree-node { margin-bottom: 0.75rem; }';
+        echo '.tree-folder { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 0.9rem 1rem; margin-bottom: 0.5rem; cursor: pointer; user-select: none; }';
+        echo '.tree-folder::before { content: "▸ "; }';
+        echo '.tree-folder.open::before { content: "▾ "; }';
+        echo '.tree-children { list-style: none; padding-left: 1.25rem; margin: 0; display: none; }';
+        echo '.tree-folder.open + .tree-children { display: block; }';
+        echo '.repo-item { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; }';
         echo '.repo-item a { color: #0a58ca; text-decoration: none; font-weight: 600; }';
         echo '.repo-meta { color: #555; margin-top: 0.35rem; font-size: 0.9rem; }';
         echo '.empty { color: #666; font-style: italic; }';
@@ -213,19 +203,131 @@ final class RepoBrowser
             return;
         }
 
-        echo '<ul class="repo-list">';
-        foreach ($repos as $repo) {
-            $displayName = $repo->getDisplayName($repos);
-            $href = '?repo=' . rawurlencode($repo->getPath());
+        foreach ($this->configuredRoots as $root) {
+            $rootRepos = array_values(array_filter($repos, function (GitRepo $repo) use ($root): bool {
+                $displayPath = str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $repo->getDisplayPath());
+                $rootPath = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $root), DIRECTORY_SEPARATOR);
+                return $rootPath !== '' && str_starts_with($displayPath, $rootPath . DIRECTORY_SEPARATOR);
+            }));
 
-            echo '<li class="repo-item">';
-            echo '<div><a href="' . htmlspecialchars($href, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') . '</a></div>';
-            echo '<div class="repo-meta">' . htmlspecialchars($repo->getPath(), ENT_QUOTES, 'UTF-8') . '</div>';
-            echo '</li>';
+            if ($rootRepos === []) {
+                continue;
+            }
+
+            echo '<div class="repo-root-header">Repo root: ' . htmlspecialchars($root, ENT_QUOTES, 'UTF-8') . '</div>';
+            $tree = $this->buildTree($rootRepos);
+            echo '<ul class="repo-tree">';
+            foreach ($tree as $node) {
+                $this->renderTreeNode($node);
+            }
+            echo '</ul>';
         }
-        echo '</ul>';
+
         echo '</body>';
         echo '</html>';
+    }
+
+    private function buildTree(array $repos): array
+    {
+        $root = [];
+
+        foreach ($repos as $repo) {
+            $relativePath = $this->stripConfiguredRoot($repo->getDisplayPath());
+            $segments = array_values(array_filter(explode(DIRECTORY_SEPARATOR, $relativePath), static fn (string $segment) => $segment !== ''));
+
+            if ($segments === []) {
+                $root[] = [
+                    'name' => $repo->getDisplayName(),
+                    'children' => [],
+                    'repos' => [$repo],
+                ];
+                continue;
+            }
+
+            $cursor = &$root;
+            foreach ($segments as $index => $segment) {
+                $isLeaf = $index === count($segments) - 1;
+                $found = null;
+
+                foreach ($cursor as $key => $node) {
+                    if (($node['name'] ?? null) === $segment && (isset($node['children']) || isset($node['repos']))) {
+                        $found = $key;
+                        break;
+                    }
+                }
+
+                if ($found === null) {
+                    $cursor[] = [
+                        'name' => $segment,
+                        'children' => [],
+                        'repos' => [],
+                    ];
+                    $found = count($cursor) - 1;
+                }
+
+                if ($isLeaf) {
+                    $cursor[$found]['repos'][] = $repo;
+                } else {
+                    $cursor = &$cursor[$found]['children'];
+                }
+            }
+        }
+
+        return $root;
+    }
+
+    private function stripConfiguredRoot(string $path): string
+    {
+        $normalized = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $path), DIRECTORY_SEPARATOR);
+
+        foreach ($this->configuredRoots as $root) {
+            $rootPath = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $root), DIRECTORY_SEPARATOR);
+            if ($rootPath === '' || $normalized === $rootPath) {
+                continue;
+            }
+
+            if (str_starts_with($normalized, $rootPath . DIRECTORY_SEPARATOR)) {
+                return substr($normalized, strlen($rootPath) + 1);
+            }
+        }
+
+        return basename($normalized) === '.git' ? dirname($normalized) : $normalized;
+    }
+
+    private function renderTreeNode(array $node): void
+    {
+        $hasChildren = !empty($node['children']);
+        $hasRepos = !empty($node['repos']);
+
+        if ($hasChildren) {
+            echo '<li class="tree-node">';
+            echo '<div class="tree-folder open" onclick="this.classList.toggle(\'open\');">' . htmlspecialchars((string) $node['name'], ENT_QUOTES, 'UTF-8') . '</div>';
+            echo '<ul class="tree-children">';
+
+            foreach ($node['children'] as $child) {
+                $this->renderTreeNode($child);
+            }
+
+            foreach ($node['repos'] as $repo) {
+                $href = '?repo=' . rawurlencode($repo->getPath());
+                echo '<li class="repo-item">';
+                echo '<div><a href="' . htmlspecialchars($href, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') . '</a></div>';
+                echo '<div class="repo-meta">' . htmlspecialchars($repo->getDisplayPath(), ENT_QUOTES, 'UTF-8') . '</div>';
+                echo '</li>';
+            }
+
+            echo '</ul>';
+            echo '</li>';
+            return;
+        }
+
+        foreach ($node['repos'] as $repo) {
+            $href = '?repo=' . rawurlencode($repo->getPath());
+            echo '<li class="repo-item">';
+            echo '<div><a href="' . htmlspecialchars($href, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') . '</a></div>';
+            echo '<div class="repo-meta">' . htmlspecialchars($repo->getDisplayPath(), ENT_QUOTES, 'UTF-8') . '</div>';
+            echo '</li>';
+        }
     }
 
     private function renderRepoDetail(string $repoPath, string $command, array $repos): void
@@ -279,6 +381,107 @@ final class RepoBrowser
         echo '</div>';
         echo '</body>';
         echo '</html>';
+    }
+}
+
+function buildCliTree(array $repos, array $repoRoots): array
+{
+    $root = [];
+
+    foreach ($repos as $repo) {
+        $path = $repo->getDisplayPath();
+        $relative = stripConfiguredRootForCli($path, $repoRoots);
+        $segments = array_values(array_filter(explode(DIRECTORY_SEPARATOR, $relative), static fn (string $segment) => $segment !== ''));
+
+        if ($segments === []) {
+            $root[] = [
+                'name' => $repo->getDisplayName(),
+                'children' => [],
+                'repos' => [$repo],
+            ];
+            continue;
+        }
+
+        $cursor = &$root;
+        foreach ($segments as $index => $segment) {
+            $isLeaf = $index === count($segments) - 1;
+            $foundIndex = null;
+
+            foreach ($cursor as $key => $node) {
+                if (($node['name'] ?? null) === $segment) {
+                    $foundIndex = $key;
+                    break;
+                }
+            }
+
+            if ($foundIndex === null) {
+                $cursor[] = [
+                    'name' => $segment,
+                    'children' => [],
+                    'repos' => [],
+                ];
+                $foundIndex = count($cursor) - 1;
+            }
+
+            if ($isLeaf) {
+                $cursor[$foundIndex]['repos'][] = $repo;
+            } else {
+                $cursor = &$cursor[$foundIndex]['children'];
+            }
+        }
+    }
+
+    return $root;
+}
+
+function buildRootGroups(array $repos, array $repoRoots): array
+{
+    $groups = [];
+
+    foreach ($repoRoots as $root) {
+        $groups[$root] = array_values(array_filter($repos, function (GitRepo $repo) use ($root): bool {
+            $displayPath = str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $repo->getDisplayPath());
+            $rootPath = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $root), DIRECTORY_SEPARATOR);
+            return $rootPath !== '' && str_starts_with($displayPath, $rootPath . DIRECTORY_SEPARATOR);
+        }));
+    }
+
+    return $groups;
+}
+
+function stripConfiguredRootForCli(string $path, array $repoRoots): string
+{
+    $normalized = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $path), DIRECTORY_SEPARATOR);
+
+    foreach ($repoRoots as $root) {
+        $rootPath = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $root), DIRECTORY_SEPARATOR);
+        if ($rootPath === '' || $normalized === $rootPath) {
+            continue;
+        }
+
+        if (str_starts_with($normalized, $rootPath . DIRECTORY_SEPARATOR)) {
+            return substr($normalized, strlen($rootPath) + 1);
+        }
+    }
+
+    return $normalized;
+}
+
+function printCliTreeNode(array $node, int $depth): void
+{
+    $indent = str_repeat('  ', $depth);
+
+    if (!empty($node['children'])) {
+        echo $indent . $node['name'] . PHP_EOL;
+        foreach ($node['children'] as $child) {
+            printCliTreeNode($child, $depth + 1);
+        }
+    }
+
+    foreach ($node['repos'] as $repo) {
+        $displayName = $repo->getDisplayName();
+        $displayPath = $repo->getDisplayPath();
+        echo $indent . '- ' . $displayName . ' [' . $displayPath . ']' . PHP_EOL;
     }
 }
 
@@ -346,8 +549,20 @@ function runCliMode(array $argv): void
         }
 
         echo PHP_EOL . 'Found repositories (' . count($repos) . '):' . PHP_EOL;
-        foreach ($repos as $repo) {
-            echo ' - ' . $repo->getDisplayName($repos) . ' [' . $repo->getPath() . ']' . PHP_EOL;
+        $groups = buildRootGroups($repos, $repoRoots);
+
+        foreach ($repoRoots as $root) {
+            $rootRepos = $groups[$root] ?? [];
+            if ($rootRepos === []) {
+                continue;
+            }
+
+            echo 'Repo root: ' . $root . PHP_EOL;
+            $tree = buildCliTree($rootRepos, [$root]);
+            foreach ($tree as $node) {
+                printCliTreeNode($node, 1);
+            }
+            echo PHP_EOL;
         }
         return;
     }
