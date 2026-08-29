@@ -78,10 +78,32 @@ final class GitRepo
         return trim($output);
     }
 
-    public function getBranchCommits(string $branch, int $limit = 30): array
+    public function getBranchCommits(string $branch, int $limit = 30, array $knownBranches = [], ?string $knownHeadBranch = null): array
     {
         $ref = $branch !== '' ? $branch : 'HEAD';
-        [$output, $status] = GitCommandRunner::runWithStatus($this->path, ['log', '--pretty=format:%H%x1f%an%x1f%ad%x1f%s', '--date=iso-strict', '-n', (string) $limit, $ref]);
+        [$headOutput, $headStatus] = GitCommandRunner::runWithStatus($this->path, ['rev-parse', '--verify', 'HEAD']);
+        if ($headStatus !== 0 || trim($headOutput) === '') {
+            return [];
+        }
+
+        $logArgs = ['log', '--pretty=format:%H%x1f%an%x1f%ad%x1f%s', '--date=iso-strict', '-n', (string) $limit, $ref];
+
+        $headRef = $knownHeadBranch ?? $this->getHeadBranch();
+        if ($headRef !== '' && $ref !== $headRef) {
+            $otherBranches = array_values(array_filter(
+                $knownBranches !== [] ? $knownBranches : $this->getBranches(),
+                static fn (string $candidate): bool => $candidate !== '' && $candidate !== $ref
+            ));
+
+            if ($otherBranches !== []) {
+                $logArgs = ['log', '--first-parent', '--pretty=format:%H%x1f%an%x1f%ad%x1f%s', '--date=iso-strict', '-n', (string) $limit, $ref, '--not'];
+                foreach ($otherBranches as $otherBranch) {
+                    $logArgs[] = $otherBranch;
+                }
+            }
+        }
+
+        [$output, $status] = GitCommandRunner::runWithStatus($this->path, $logArgs);
 
         if ($status !== 0 || trim($output) === '') {
             return [];
@@ -105,7 +127,7 @@ final class GitRepo
         return $commits;
     }
 
-    public function getDetailData(): array
+    public function getDetailData(bool $includeAllBranchCommits = true): array
     {
         $branches = $this->getBranches();
         $headBranch = $this->getHeadBranch();
@@ -119,8 +141,10 @@ final class GitRepo
         }
 
         $commitsByBranch = [];
-        foreach ($branches as $branch) {
-            $commitsByBranch[$branch] = $this->getBranchCommits($branch, 30);
+        if ($includeAllBranchCommits) {
+            foreach ($branches as $branch) {
+                $commitsByBranch[$branch] = $this->getBranchCommits($branch, 30, $branches, $headBranch);
+            }
         }
 
         return [
@@ -581,7 +605,10 @@ final class RepoBrowser
 
     private function renderRepoDetail(GitRepo $repo, string $command, array $repos): void
     {
-        $repoData = $repo->getDetailData();
+        $requestStartedAt = microtime(true);
+        $detailDataStartedAt = microtime(true);
+        $repoData = $repo->getDetailData(false);
+        $detailDataDurationMs = (microtime(true) - $detailDataStartedAt) * 1000;
         $repoData['repo_path'] = $this->getRepoSelector($repo);
         $repoData['display_path'] = $this->getRelativeDisplayPath($repo);
 
@@ -597,7 +624,15 @@ final class RepoBrowser
         }
 
         $detailUrlBase = '?repo=' . rawurlencode($this->getRepoSelector($repo)) . '&amp;command=branch';
-        $branchCommits = $repoData['commits_by_branch'][$selectedBranch] ?? $repo->getBranchCommits($selectedBranch, 30);
+        $selectedBranchLoadStartedAt = microtime(true);
+        $branchCommits = $repo->getBranchCommits($selectedBranch, 30, $repoData['branches'], $repoData['head_branch']);
+        $selectedBranchLoadDurationMs = (microtime(true) - $selectedBranchLoadStartedAt) * 1000;
+
+        $repoData['timing'] = [
+            'detail_data_ms' => round($detailDataDurationMs, 1),
+            'selected_branch_ms' => round($selectedBranchLoadDurationMs, 1),
+            'total_ms' => round((microtime(true) - $requestStartedAt) * 1000, 1),
+        ];
 
         echo '<!DOCTYPE html>';
         echo '<html lang="en">';
@@ -624,6 +659,8 @@ final class RepoBrowser
         echo '.commit-hash { font-family: Consolas, monospace; font-size: 0.82rem; color: #1f2937; }';
         echo '.commit-meta { color: #4b5563; font-size: 0.82rem; }';
         echo '.commit-message { font-weight: 600; color: #111827; word-break: break-word; }';
+        echo '.timing-meta { color: #475569; font-size: 0.85rem; margin-top: 0.45rem; }';
+        echo '.page-footer { margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #d6d9df; color: #475569; font-size: 0.85rem; }';
         echo '.placeholder { padding: 1rem; color: #475569; background: #f8fafc; border: 1px solid #dbe2ed; border-radius: 8px; }';
         echo '</style>';
         echo '</head>';
@@ -675,6 +712,10 @@ final class RepoBrowser
             echo '</div>';
         }
         echo '</div>';
+
+        echo '<footer class="page-footer">';
+        echo '<strong>Timing:</strong> data ' . htmlspecialchars((string) $repoData['timing']['detail_data_ms'], ENT_QUOTES, 'UTF-8') . ' ms, branch ' . htmlspecialchars((string) $repoData['timing']['selected_branch_ms'], ENT_QUOTES, 'UTF-8') . ' ms, total ' . htmlspecialchars((string) $repoData['timing']['total_ms'], ENT_QUOTES, 'UTF-8') . ' ms';
+        echo '</footer>';
 
         echo '<script type="application/json" id="repo-data">' . json_encode($repoData, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) . '</script>';
         echo '<script>';
