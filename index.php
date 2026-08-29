@@ -48,29 +48,98 @@ final class GitRepo
     {
         return GitCommandRunner::run($this->path, ['log', '--oneline', '-n', '20']);
     }
+
+    public function getCommitCount(): int
+    {
+        [$output, $status] = GitCommandRunner::runWithStatus($this->path, ['rev-list', '--count', 'HEAD']);
+
+        if ($status !== 0) {
+            return 0;
+        }
+
+        $trimmed = trim($output);
+        return is_numeric($trimmed) ? (int) $trimmed : 0;
+    }
+
+    public function getLastCommit(): array
+    {
+        [$output, $status] = GitCommandRunner::runWithStatus($this->path, ['log', '-1', '--pretty=format:%an%n%ad%n%s%n%b']);
+
+        if ($status !== 0 || trim($output) === '') {
+            return [
+                'exists' => false,
+                'author' => '',
+                'date' => '',
+                'subject' => 'No commits yet',
+                'full_message' => 'No commits yet',
+            ];
+        }
+
+        $lines = preg_split('/\r\n|\r|\n/', $output);
+        $author = trim((string) ($lines[0] ?? ''));
+        $date = trim((string) ($lines[1] ?? ''));
+        $subject = trim((string) ($lines[2] ?? ''));
+        $body = trim(implode("\n", array_slice($lines, 3)));
+
+        $fullMessage = trim($subject . ($body !== '' ? "\n" . $body : ''));
+        if ($fullMessage === '') {
+            $fullMessage = 'No commit message';
+        }
+
+        return [
+            'exists' => true,
+            'author' => $author !== '' ? $author : 'unknown',
+            'date' => $date !== '' ? $date : 'unknown',
+            'subject' => $subject !== '' ? $subject : 'No commit message',
+            'full_message' => $fullMessage,
+        ];
+    }
 }
 
 final class GitCommandRunner
 {
     public static function run(string $repoPath, array $arguments): string
     {
-        $command = 'git --git-dir=' . escapeshellarg($repoPath);
+        [$output, $status] = self::runWithStatus($repoPath, $arguments);
 
-        foreach ($arguments as $argument) {
-            $command .= ' ' . escapeshellarg((string) $argument);
-        }
-
-        $output = [];
-        $status = 0;
-        exec($command . ' 2>&1', $output, $status);
-
-        $text = implode(PHP_EOL, $output);
-
-        if ($status !== 0 && trim($text) === '') {
+        if ($status !== 0 && trim($output) === '') {
             return sprintf('git exited with status %d.', $status);
         }
 
-        return trim($text) !== '' ? $text : '(no output)';
+        return trim($output) !== '' ? $output : '(no output)';
+    }
+
+    public static function runWithStatus(string $repoPath, array $arguments): array
+    {
+        $command = ['git', '--git-dir=' . $repoPath];
+        foreach ($arguments as $argument) {
+            $command[] = (string) $argument;
+        }
+
+        $descriptors = [
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+
+        $process = proc_open($command, $descriptors, $pipes, null, null, ['bypass_shell' => true]);
+        if (!is_resource($process)) {
+            return ['', 1];
+        }
+
+        fclose($pipes[0]);
+        $stdout = stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        $status = proc_close($process);
+        $output = trim((string) $stdout);
+        if ($output === '' && trim((string) $stderr) !== '') {
+            $output = trim((string) $stderr);
+        }
+
+        return [$output, $status];
     }
 }
 
@@ -227,6 +296,23 @@ final class RepoBrowser
         echo '</html>';
     }
 
+    private function renderRepoMeta(GitRepo $repo): string
+    {
+        $commitCount = $repo->getCommitCount();
+        $lastCommit = $repo->getLastCommit();
+
+        if ($lastCommit['exists'] === false) {
+            $lastCommitText = 'No commits yet';
+            $hoverText = 'This repository has no commits yet.';
+        } else {
+            $formatted = trim($lastCommit['author'] !== '' ? $lastCommit['author'] : 'unknown');
+            $lastCommitText = $formatted . ' • ' . $lastCommit['date'] . ' • ' . $lastCommit['subject'];
+            $hoverText = $lastCommit['full_message'];
+        }
+
+        return '<div class="repo-meta"><strong>Commits:</strong> ' . (int) $commitCount . ' &nbsp;|&nbsp; <strong>Last:</strong> <span title="' . htmlspecialchars($hoverText, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($lastCommitText, ENT_QUOTES, 'UTF-8') . '</span></div>';
+    }
+
     private function buildTree(array $repos): array
     {
         $root = [];
@@ -313,6 +399,7 @@ final class RepoBrowser
                 echo '<li class="repo-item">';
                 echo '<div><a href="' . htmlspecialchars($href, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') . '</a></div>';
                 echo '<div class="repo-meta">' . htmlspecialchars($repo->getDisplayPath(), ENT_QUOTES, 'UTF-8') . '</div>';
+                echo $this->renderRepoMeta($repo);
                 echo '</li>';
             }
 
@@ -326,6 +413,7 @@ final class RepoBrowser
             echo '<li class="repo-item">';
             echo '<div><a href="' . htmlspecialchars($href, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') . '</a></div>';
             echo '<div class="repo-meta">' . htmlspecialchars($repo->getDisplayPath(), ENT_QUOTES, 'UTF-8') . '</div>';
+            echo $this->renderRepoMeta($repo);
             echo '</li>';
         }
     }
@@ -374,8 +462,18 @@ final class RepoBrowser
         echo '<a class="button" href="?repo=' . rawurlencode($repo->getPath()) . '&amp;command=branch">Branch</a>';
         echo '<a class="button" href="?repo=' . rawurlencode($repo->getPath()) . '&amp;command=log">Log</a>';
         echo '</div>';
+        $commitCount = $repo->getCommitCount();
+        $lastCommit = $repo->getLastCommit();
+
         echo '<div class="box">';
         echo '<p><strong>Repository:</strong> ' . htmlspecialchars($repo->getPath(), ENT_QUOTES, 'UTF-8') . '</p>';
+        echo '<p><strong>Commits:</strong> ' . (int) $commitCount . '</p>';
+        if ($lastCommit['exists']) {
+            echo '<p><strong>Last commit:</strong> ' . htmlspecialchars($lastCommit['author'] . ' • ' . $lastCommit['date'] . ' • ' . $lastCommit['subject'], ENT_QUOTES, 'UTF-8') . '</p>';
+            echo '<p title="' . htmlspecialchars($lastCommit['full_message'], ENT_QUOTES, 'UTF-8') . '"><strong>Full message:</strong> ' . htmlspecialchars($lastCommit['full_message'], ENT_QUOTES, 'UTF-8') . '</p>';
+        } else {
+            echo '<p><strong>Last commit:</strong> No commits yet</p>';
+        }
         echo '<p><strong>Command:</strong> ' . htmlspecialchars($command, ENT_QUOTES, 'UTF-8') . '</p>';
         echo '<pre>' . htmlspecialchars($output, ENT_QUOTES, 'UTF-8') . '</pre>';
         echo '</div>';
@@ -481,7 +579,14 @@ function printCliTreeNode(array $node, int $depth): void
     foreach ($node['repos'] as $repo) {
         $displayName = $repo->getDisplayName();
         $displayPath = $repo->getDisplayPath();
-        echo $indent . '- ' . $displayName . ' [' . $displayPath . ']' . PHP_EOL;
+        $commitCount = $repo->getCommitCount();
+        $lastCommit = $repo->getLastCommit();
+
+        $lastCommitText = $lastCommit['exists']
+            ? $lastCommit['author'] . ' • ' . $lastCommit['date'] . ' • ' . $lastCommit['subject']
+            : 'No commits yet';
+
+        echo $indent . '- ' . $displayName . ' [' . $displayPath . '] (commits: ' . $commitCount . ', last: ' . $lastCommitText . ')' . PHP_EOL;
     }
 }
 
