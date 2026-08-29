@@ -188,27 +188,21 @@ final class GitRepoScanner
 
     private function isBareGitRepo(string $directory): bool
     {
-        if (!is_dir($directory)) {
-            return false;
-        }
+        if (!is_dir($directory)) return false;
 
-        $requiredPaths = [
-            $directory . DIRECTORY_SEPARATOR . 'HEAD',
-            $directory . DIRECTORY_SEPARATOR . 'config',
-            $directory . DIRECTORY_SEPARATOR . 'objects',
-            $directory . DIRECTORY_SEPARATOR . 'refs',
+        $required = [
+            $directory . DIRECTORY_SEPARATOR . 'HEAD' => 'file',
+            $directory . DIRECTORY_SEPARATOR . 'config' => 'file',
+            $directory . DIRECTORY_SEPARATOR . 'objects' => 'dir',
+            $directory . DIRECTORY_SEPARATOR . 'refs' => 'dir',
         ];
 
-        foreach ($requiredPaths as $path) {
-            if (!file_exists($path)) {
-                return false;
-            }
+        foreach ($required as $path => $type) {
+            if ($type === 'file' && !is_file($path)) return false;
+            if ($type === 'dir' && !is_dir($path)) return false;
         }
 
-        return is_file($directory . DIRECTORY_SEPARATOR . 'HEAD')
-            && is_file($directory . DIRECTORY_SEPARATOR . 'config')
-            && is_dir($directory . DIRECTORY_SEPARATOR . 'objects')
-            && is_dir($directory . DIRECTORY_SEPARATOR . 'refs');
+        return true;
     }
 }
 
