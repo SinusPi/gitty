@@ -45,8 +45,10 @@ Build a small PHP 8.1 tool for browsing bare Git repositories stored under confi
 - Default branch in bare repos should be set correctly in HEAD for branch/log to be meaningful.
 - A `.git` directory is displayed as its parent folder name.
 - Repos that share the same parent folder are collapsed to that folder name in the list view, while the actual path remains visible in metadata.
+- The example repo fixtures in `example-repos/` are the canonical regression dataset for future tests.
 
 ## Files
 - index.php — main app
 - config.php — default repo roots configuration
+- test-example-repos.php — regression test covering the example repo fixtures
 - AGENTS.md — workspace-local agent memory
