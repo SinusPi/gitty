@@ -247,8 +247,10 @@ final class RepoBrowser
         echo '.tree-folder.open::before { content: "▾ "; }';
         echo '.tree-children { list-style: none; padding-left: 1.25rem; margin: 0; display: none; }';
         echo '.tree-folder.open + .tree-children { display: block; }';
-        echo '.repo-item { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; }';
-        echo '.repo-item a { color: #0a58ca; text-decoration: none; font-weight: 600; }';
+        echo '.repo-item { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease; }';
+        echo '.repo-item:hover { border-color: #8bb3ff; box-shadow: 0 0 0 2px rgba(13,110,253,0.08); }';
+        echo '.repo-item:focus { outline: 2px solid #0d6efd; outline-offset: 2px; }';
+        echo '.repo-name { color: #0a58ca; text-decoration: none; font-weight: 600; margin-bottom: 0.25rem; }';
         echo '.repo-meta { color: #555; margin-top: 0.35rem; font-size: 0.9rem; }';
         echo '.empty { color: #666; font-style: italic; }';
         echo '</style>';
@@ -389,9 +391,9 @@ final class RepoBrowser
             }
 
             foreach ($node['repos'] as $repo) {
-                $href = '?repo=' . rawurlencode($repo->getPath());
-                echo '<li class="repo-item">';
-                echo '<div><a href="' . htmlspecialchars($href, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') . '</a></div>';
+                $detailHref = '?repo=' . rawurlencode($repo->getPath()) . '&amp;command=branch';
+                echo '<li class="repo-item" tabindex="0" role="button" onclick="window.location.href=\'' . addslashes($detailHref) . '\';" onkeydown="if (event.key === \"Enter\" || event.key === \" \") { event.preventDefault(); window.location.href=\'' . addslashes($detailHref) . '\'; }">';
+                echo '<div class="repo-name">' . htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') . '</div>';
                 echo '<div class="repo-meta">' . htmlspecialchars($repo->getDisplayPath(), ENT_QUOTES, 'UTF-8') . '</div>';
                 echo $this->renderRepoMeta($repo);
                 echo '</li>';
@@ -403,9 +405,9 @@ final class RepoBrowser
         }
 
         foreach ($node['repos'] as $repo) {
-            $href = '?repo=' . rawurlencode($repo->getPath());
-            echo '<li class="repo-item">';
-            echo '<div><a href="' . htmlspecialchars($href, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') . '</a></div>';
+            $detailHref = '?repo=' . rawurlencode($repo->getPath()) . '&amp;command=branch';
+            echo '<li class="repo-item" tabindex="0" role="button" onclick="window.location.href=\'' . addslashes($detailHref) . '\';" onkeydown="if (event.key === \"Enter\" || event.key === \" \") { event.preventDefault(); window.location.href=\'' . addslashes($detailHref) . '\'; }">';
+            echo '<div class="repo-name">' . htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') . '</div>';
             echo '<div class="repo-meta">' . htmlspecialchars($repo->getDisplayPath(), ENT_QUOTES, 'UTF-8') . '</div>';
             echo $this->renderRepoMeta($repo);
             echo '</li>';
