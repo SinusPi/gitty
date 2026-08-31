@@ -55,6 +55,11 @@ final class GitRepo
         return GitCommandRunner::run($this->path, ['log', '--oneline', '-n', '20']);
     }
 
+    public function getTreeOutput(int $limit = 120): string
+    {
+        return GitCommandRunner::run($this->path, ['log', '--graph', '--decorate', '--oneline', '--color=always', '-n', (string) $limit, '--all']);
+    }
+
     public function getBranches(): array
     {
         [$output, $status] = GitCommandRunner::runWithStatus($this->path, ['branch', '--format=%(refname:short)']);
@@ -125,6 +130,39 @@ final class GitRepo
         }
 
         return $commits;
+    }
+
+    public function getBranchGraph(string $branch, int $limit = 120, array $knownBranches = [], ?string $knownHeadBranch = null): string
+    {
+        $ref = $branch !== '' ? $branch : 'HEAD';
+        [$headOutput, $headStatus] = GitCommandRunner::runWithStatus($this->path, ['rev-parse', '--verify', 'HEAD']);
+        if ($headStatus !== 0 || trim($headOutput) === '') {
+            return '';
+        }
+
+        $logArgs = ['log', '--graph', '--decorate', '--oneline', '--color=always', '-n', (string) $limit, $ref];
+
+        $headRef = $knownHeadBranch ?? $this->getHeadBranch();
+        if ($headRef !== '' && $ref !== $headRef) {
+            $otherBranches = array_values(array_filter(
+                $knownBranches !== [] ? $knownBranches : $this->getBranches(),
+                static fn (string $candidate): bool => $candidate !== '' && $candidate !== $ref
+            ));
+
+            if ($otherBranches !== []) {
+                $logArgs = ['log', '--graph', '--decorate', '--oneline', '--color=always', '--first-parent', '-n', (string) $limit, $ref, '--not'];
+                foreach ($otherBranches as $otherBranch) {
+                    $logArgs[] = $otherBranch;
+                }
+            }
+        }
+
+        [$output, $status] = GitCommandRunner::runWithStatus($this->path, $logArgs);
+        if ($status !== 0) {
+            return '';
+        }
+
+        return $output;
     }
 
     public function getDetailData(bool $includeAllBranchCommits = true): array
@@ -201,6 +239,76 @@ final class GitRepo
             'subject' => $subject !== '' ? $subject : 'No commit message',
             'full_message' => $fullMessage,
         ];
+    }
+}
+
+final class RepoRoot
+{
+    public function __construct(
+        private string $path,
+        private string $name = '',
+        private string $description = '',
+    ) {
+    }
+
+    public function getPath(): string
+    {
+        return GitRepo::normalizePath($this->path);
+    }
+
+    public function getName(): string
+    {
+        return trim($this->name);
+    }
+
+    public function getDescription(): string
+    {
+        return trim($this->description);
+    }
+
+    public function getLabel(): string
+    {
+        $name = $this->getName();
+        if ($name !== '') {
+            return $name;
+        }
+
+        $normalized = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $this->getPath()), DIRECTORY_SEPARATOR);
+        $fallback = basename($normalized);
+
+        if ($fallback === '' || $fallback === '.' || $fallback === DIRECTORY_SEPARATOR) {
+            return 'root';
+        }
+
+        return $fallback;
+    }
+
+    public function withNormalizedPath(): self
+    {
+        return new self($this->getPath(), $this->getName(), $this->getDescription());
+    }
+
+    public static function fromConfigValue(mixed $root): ?self
+    {
+        if (is_array($root)) {
+            $path = trim((string) ($root['path'] ?? ''));
+            if ($path === '') {
+                return null;
+            }
+
+            return (new self(
+                $path,
+                trim((string) ($root['name'] ?? '')),
+                trim((string) ($root['description'] ?? '')),
+            ))->withNormalizedPath();
+        }
+
+        $path = trim((string) $root);
+        if ($path === '') {
+            return null;
+        }
+
+        return (new self($path))->withNormalizedPath();
     }
 }
 
@@ -317,13 +425,77 @@ final class GitRepoScanner
 
 final class RepoBrowser
 {
+    private const ANSI_FG_COLORS = [
+        30 => '#111827',
+        31 => '#ef4444',
+        32 => '#22c55e',
+        33 => '#eab308',
+        34 => '#3b82f6',
+        35 => '#d946ef',
+        36 => '#06b6d4',
+        37 => '#e5e7eb',
+        90 => '#6b7280',
+        91 => '#f87171',
+        92 => '#4ade80',
+        93 => '#facc15',
+        94 => '#60a5fa',
+        95 => '#e879f9',
+        96 => '#22d3ee',
+        97 => '#ffffff',
+    ];
+
     public function __construct(private array $configuredRoots)
     {
     }
 
+    private function ansiToHtml(string $text): string
+    {
+        if ($text === '') {
+            return '';
+        }
+
+        $parts = preg_split('/(\e\[[0-9;]*m)/', $text, -1, PREG_SPLIT_DELIM_CAPTURE);
+        if ($parts === false) {
+            return htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
+        }
+
+        $activeColor = null;
+        $result = '';
+
+        foreach ($parts as $part) {
+            if ($part === '') {
+                continue;
+            }
+
+            if (preg_match('/^\e\[([0-9;]*)m$/', $part, $matches) === 1) {
+                $codes = $matches[1] === '' ? [0] : array_map('intval', explode(';', $matches[1]));
+                foreach ($codes as $code) {
+                    if ($code === 0 || $code === 39) {
+                        $activeColor = null;
+                        continue;
+                    }
+
+                    if (isset(self::ANSI_FG_COLORS[$code])) {
+                        $activeColor = self::ANSI_FG_COLORS[$code];
+                    }
+                }
+                continue;
+            }
+
+            $escaped = htmlspecialchars($part, ENT_QUOTES, 'UTF-8');
+            if ($activeColor !== null) {
+                $result .= '<span style="color:' . $activeColor . ';">' . $escaped . '</span>';
+            } else {
+                $result .= $escaped;
+            }
+        }
+
+        return $result;
+    }
+
     public function display(): void
     {
-        $scanner = new GitRepoScanner($this->configuredRoots);
+        $scanner = new GitRepoScanner(array_map(static fn (RepoRoot $root): string => $root->getPath(), $this->configuredRoots));
         $repos = $scanner->findRepos();
 
         $selectedRepo = $_GET['repo'] ?? null;
@@ -360,7 +532,12 @@ final class RepoBrowser
 
         array_shift($parts);
         $relative = implode(DIRECTORY_SEPARATOR, $parts);
-        $rootPath = GitRepo::normalizePath($this->configuredRoots[$rootIndex - 1]);
+        $root = $this->configuredRoots[$rootIndex - 1];
+        if (!$root instanceof RepoRoot) {
+            return null;
+        }
+
+        $rootPath = $root->getPath();
         $candidatePath = $relative === '' ? $rootPath : GitRepo::normalizePath($rootPath . DIRECTORY_SEPARATOR . $relative);
 
         foreach ($repos as $repo) {
@@ -379,7 +556,11 @@ final class RepoBrowser
         $repoPath = GitRepo::normalizePath($repo->getDisplayPath());
 
         foreach ($this->configuredRoots as $index => $root) {
-            $rootPath = GitRepo::normalizePath((string) $root);
+            if (!$root instanceof RepoRoot) {
+                continue;
+            }
+
+            $rootPath = $root->getPath();
             if ($rootPath !== '' && str_starts_with($repoPath, $rootPath . DIRECTORY_SEPARATOR)) {
                 $relative = substr($repoPath, strlen($rootPath) + 1);
                 return ($index + 1) . '/' . str_replace('\\', '/', $relative);
@@ -393,8 +574,12 @@ final class RepoBrowser
     {
         $repoPath = GitRepo::normalizePath($repo->getDisplayPath());
 
-        foreach ($this->configuredRoots as $root) {
-            $rootPath = GitRepo::normalizePath((string) $root);
+        foreach ($this->configuredRoots as $index => $root) {
+            if (!$root instanceof RepoRoot) {
+                continue;
+            }
+
+            $rootPath = $root->getPath();
             if ($rootPath !== '' && str_starts_with($repoPath, $rootPath . DIRECTORY_SEPARATOR)) {
                 $relative = substr($repoPath, strlen($rootPath) + 1);
                 return str_replace('\\', '/', $relative);
@@ -406,15 +591,18 @@ final class RepoBrowser
 
     private function getRepoRootLabel(int $rootIndex): string
     {
-        $root = $this->configuredRoots[$rootIndex] ?? '';
-        $normalized = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, (string) $root), DIRECTORY_SEPARATOR);
-        $name = basename($normalized);
-
-        if ($name === '' || $name === '.' || $name === DIRECTORY_SEPARATOR) {
-            return 'root ' . ($rootIndex + 1);
+        $root = $this->configuredRoots[$rootIndex] ?? null;
+        if ($root instanceof RepoRoot) {
+            return $root->getLabel();
         }
 
-        return $name;
+        return 'root ' . ($rootIndex + 1);
+    }
+
+    private function getRepoRootDescription(int $rootIndex): string
+    {
+        $root = $this->configuredRoots[$rootIndex] ?? null;
+        return $root instanceof RepoRoot ? $root->getDescription() : '';
     }
 
     private function renderRepoList(array $repos): void
@@ -429,6 +617,7 @@ final class RepoBrowser
         echo 'body { font-family: Arial, sans-serif; margin: 2rem; background: #f4f5f7; color: #222; }';
         echo 'h1 { margin-bottom: 1rem; }';
         echo '.repo-root-header { margin: 1.5rem 0 0.75rem; font-size: 1.1rem; font-weight: 700; }';
+        echo '.repo-root-description { margin: -0.35rem 0 0.75rem; color: #64748b; font-size: 0.9rem; }';
         echo '.repo-tree { list-style: none; padding-left: 0; max-width: 900px; }';
         echo '.tree-node { margin-bottom: 0.75rem; }';
         echo '.tree-folder { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 0.9rem 1rem; margin-bottom: 0.5rem; cursor: pointer; user-select: none; }';
@@ -458,9 +647,14 @@ final class RepoBrowser
         }
 
         foreach ($this->configuredRoots as $rootIndex => $root) {
-            $rootRepos = array_values(array_filter($repos, function (GitRepo $repo) use ($root): bool {
+            if (!$root instanceof RepoRoot) {
+                continue;
+            }
+
+            $rootPathForFilter = $root->getPath();
+            $rootRepos = array_values(array_filter($repos, function (GitRepo $repo) use ($rootPathForFilter): bool {
                 $displayPath = str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $repo->getDisplayPath());
-                $rootPath = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $root), DIRECTORY_SEPARATOR);
+                $rootPath = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $rootPathForFilter), DIRECTORY_SEPARATOR);
                 return $rootPath !== '' && str_starts_with($displayPath, $rootPath . DIRECTORY_SEPARATOR);
             }));
 
@@ -469,6 +663,10 @@ final class RepoBrowser
             }
 
             echo '<div class="repo-root-header">Repo root ' . ($rootIndex + 1) . ': ' . htmlspecialchars($this->getRepoRootLabel($rootIndex), ENT_QUOTES, 'UTF-8') . '</div>';
+            $rootDescription = $this->getRepoRootDescription($rootIndex);
+            if ($rootDescription !== '') {
+                echo '<div class="repo-root-description">' . htmlspecialchars($rootDescription, ENT_QUOTES, 'UTF-8') . '</div>';
+            }
             $tree = $this->buildTree($rootRepos);
             echo '<ul class="repo-tree">';
             foreach ($tree as $node) {
@@ -551,8 +749,12 @@ final class RepoBrowser
     {
         $normalized = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $path), DIRECTORY_SEPARATOR);
 
-        foreach ($this->configuredRoots as $root) {
-            $rootPath = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $root), DIRECTORY_SEPARATOR);
+        foreach ($this->configuredRoots as $index => $root) {
+            if (!$root instanceof RepoRoot) {
+                continue;
+            }
+
+            $rootPath = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $root->getPath()), DIRECTORY_SEPARATOR);
             if ($rootPath === '' || $normalized === $rootPath) {
                 continue;
             }
@@ -625,7 +827,13 @@ final class RepoBrowser
 
         $detailUrlBase = '?repo=' . rawurlencode($this->getRepoSelector($repo)) . '&amp;command=branch';
         $selectedBranchLoadStartedAt = microtime(true);
-        $branchCommits = $repo->getBranchCommits($selectedBranch, 30, $repoData['branches'], $repoData['head_branch']);
+        $branchCommits = [];
+        $branchGraph = '';
+        if ($selectedMode === 'tree') {
+            $branchGraph = $repo->getBranchGraph($selectedBranch, 120, $repoData['branches'], $repoData['head_branch']);
+        } else {
+            $branchCommits = $repo->getBranchCommits($selectedBranch, 30, $repoData['branches'], $repoData['head_branch']);
+        }
         $selectedBranchLoadDurationMs = (microtime(true) - $selectedBranchLoadStartedAt) * 1000;
 
         $repoData['timing'] = [
@@ -659,6 +867,8 @@ final class RepoBrowser
         echo '.commit-hash { font-family: Consolas, monospace; font-size: 0.82rem; color: #1f2937; }';
         echo '.commit-meta { color: #4b5563; font-size: 0.82rem; }';
         echo '.commit-message { font-weight: 600; color: #111827; word-break: break-word; }';
+        echo '.graph-box { max-height: 420px; overflow: auto; border: 1px solid #d6d9df; border-radius: 8px; background: #0f172a; color: #e2e8f0; }';
+        echo '.graph-output { margin: 0; padding: 1rem; font-family: Consolas, Monaco, monospace; font-size: 0.82rem; line-height: 1.45; white-space: pre; }';
         echo '.timing-meta { color: #475569; font-size: 0.85rem; margin-top: 0.45rem; }';
         echo '.page-footer { margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #d6d9df; color: #475569; font-size: 0.85rem; }';
         echo '.placeholder { padding: 1rem; color: #475569; background: #f8fafc; border: 1px solid #dbe2ed; border-radius: 8px; }';
@@ -690,7 +900,13 @@ final class RepoBrowser
 
         echo '<div class="box" style="margin-top: 1rem;">';
         if ($selectedMode === 'tree') {
-            echo '<div class="placeholder">Tree mode is not implemented yet. Git commit graph output will appear here in a future update.</div>';
+            if (trim($branchGraph) === '') {
+                echo '<div class="placeholder">No graph output available for this branch yet.</div>';
+            } else {
+                echo '<div class="graph-box" id="graph-view" aria-live="polite">';
+                echo '<pre class="graph-output">' . $this->ansiToHtml($branchGraph) . '</pre>';
+                echo '</div>';
+            }
         } else {
             echo '<div class="commit-box" id="commit-list" aria-live="polite">';
             if ($branchCommits === []) {
@@ -837,15 +1053,14 @@ function printCliTreeNode(array $node, int $depth, array $repoRoots): void
 
 function formatRepoRootLabel(array $repoRoots, int $index): string
 {
-    $root = $repoRoots[$index] ?? '';
-    $normalized = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, (string) $root), DIRECTORY_SEPARATOR);
-    $name = basename($normalized);
+    $root = $repoRoots[$index] ?? null;
+    return $root instanceof RepoRoot ? $root->getLabel() : 'root ' . ($index + 1);
+}
 
-    if ($name === '' || $name === '.' || $name === DIRECTORY_SEPARATOR) {
-        return 'root ' . ($index + 1);
-    }
-
-    return $name;
+function formatRepoRootDescription(array $repoRoots, int $index): string
+{
+    $root = $repoRoots[$index] ?? null;
+    return $root instanceof RepoRoot ? $root->getDescription() : '';
 }
 
 function resolveRepoSelector(string $selector, array $repos, array $repoRoots): ?GitRepo
@@ -872,7 +1087,9 @@ function resolveRepoSelector(string $selector, array $repos, array $repoRoots): 
     $candidatePath = $relative === '' ? $rootPath : GitRepo::normalizePath($rootPath . DIRECTORY_SEPARATOR . $relative);
 
     foreach ($repos as $repo) {
-        if (GitRepo::normalizePath($repo->getPath()) === $candidatePath) {
+        $repoPath = GitRepo::normalizePath($repo->getPath());
+        $displayPath = GitRepo::normalizePath($repo->getDisplayPath());
+        if ($repoPath === $candidatePath || $displayPath === $candidatePath) {
             return $repo;
         }
     }
@@ -891,22 +1108,23 @@ function normalizeConfiguredRoots(string|array|null $roots): array
     }
 
     $normalized = [];
+    $seenPaths = [];
     foreach ($roots as $root) {
-        $trimmed = trim((string) $root);
-        if ($trimmed === '') {
+        $repoRoot = RepoRoot::fromConfigValue($root);
+        if ($repoRoot === null) {
             continue;
         }
 
-        $resolved = $trimmed;
-        if (!preg_match('/^[A-Za-z]:[\\\\\/]/', $trimmed) && !str_starts_with($trimmed, '\\\\') && !str_starts_with($trimmed, '/')) {
-            $relative = ltrim($trimmed, '.\\/');
-            $resolved = __DIR__ . DIRECTORY_SEPARATOR . $relative;
+        $normalizedPath = $repoRoot->getPath();
+        if ($normalizedPath === '' || isset($seenPaths[$normalizedPath])) {
+            continue;
         }
 
-        $normalized[] = GitRepo::normalizePath($resolved);
+        $seenPaths[$normalizedPath] = true;
+        $normalized[] = $repoRoot;
     }
 
-    return array_values(array_unique($normalized));
+    return array_values($normalized);
 }
 
 function getConfiguredRepoRoots(): array
@@ -939,14 +1157,24 @@ function runCliMode(array $argv): void
     $arguments = $argv;
     array_shift($arguments);
 
-    $repoRoots = getConfiguredRepoRoots();
+    $repoRootDefinitions = getConfiguredRepoRoots();
+    $repoRoots = array_map(static fn (RepoRoot $root): string => $root->getPath(), $repoRootDefinitions);
     $scanner = new GitRepoScanner($repoRoots);
     $repos = $scanner->findRepos();
 
     if ($arguments === [] || in_array('--list', $arguments, true)) {
         echo 'Configured repo roots:' . PHP_EOL;
-        foreach ($repoRoots as $index => $root) {
-            echo ' - ' . ($index + 1) . ' (' . formatRepoRootLabel($repoRoots, $index) . ')' . PHP_EOL;
+        foreach ($repoRootDefinitions as $index => $root) {
+            if (!$root instanceof RepoRoot) {
+                continue;
+            }
+
+            $line = ' - ' . ($index + 1) . ' (' . $root->getLabel() . ')';
+            $description = $root->getDescription();
+            if ($description !== '') {
+                $line .= ' - ' . $description;
+            }
+            echo $line . PHP_EOL;
         }
 
         echo PHP_EOL . 'Found repositories (' . count($repos) . '):' . PHP_EOL;
@@ -958,7 +1186,14 @@ function runCliMode(array $argv): void
                 continue;
             }
 
-            echo 'Repo root: ' . ($index + 1) . ' (' . formatRepoRootLabel($repoRoots, $index) . ')' . PHP_EOL;
+            $repoRoot = $repoRootDefinitions[$index] ?? null;
+            $rootLabel = $repoRoot instanceof RepoRoot ? $repoRoot->getLabel() : 'root ' . ($index + 1);
+            $description = $repoRoot instanceof RepoRoot ? $repoRoot->getDescription() : '';
+
+            echo 'Repo root: ' . ($index + 1) . ' (' . $rootLabel . ')' . PHP_EOL;
+            if ($description !== '') {
+                echo '  ' . $description . PHP_EOL;
+            }
             $tree = buildCliTree($rootRepos, [$root]);
             foreach ($tree as $node) {
                 printCliTreeNode($node, 1, $repoRoots);
@@ -991,6 +1226,7 @@ function runCliMode(array $argv): void
             echo "  php index.php --list\n";
             echo "  php index.php --repo \"1/apples/cider apples/sour two\" --command branch\n";
             echo "  php index.php --repo \"1/apples/cider apples/sour two\" --command log\n";
+            echo "  php index.php --repo \"1/apples/cider apples/sour two\" --command tree\n";
             return;
         }
     }
@@ -1019,7 +1255,8 @@ function runCliMode(array $argv): void
     $output = match ($command) {
         'branch' => $matchedRepo->getBranchOutput(),
         'log' => $matchedRepo->getLogOutput(),
-        default => 'Unsupported command. Use branch or log.',
+        'tree' => $matchedRepo->getTreeOutput(),
+        default => 'Unsupported command. Use branch, log, or tree.',
     };
 
     echo $output . PHP_EOL;

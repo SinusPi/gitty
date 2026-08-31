@@ -49,6 +49,7 @@ if (!is_resource($server)) {
 
 $repoDetailUrl = $baseUrl . '/?repo=' . rawurlencode('1/apples/cider apples/sour two') . '&command=branch';
 $harvestBranchUrl = $baseUrl . '/?repo=' . rawurlencode('1/apples/cider apples/sour two') . '&command=branch&branch=' . rawurlencode('feature/harvest-tracker') . '&mode=branch';
+$treeModeUrl = $baseUrl . '/?repo=' . rawurlencode('1/apples/cider apples/sour two') . '&command=branch&branch=' . rawurlencode('master') . '&mode=tree';
 
 $startedAt = microtime(true);
 $html = '';
@@ -69,7 +70,6 @@ while (microtime(true) - $startedAt < 10.0) {
         $html = $response;
         break;
     }
-    echo "$repoDetailUrl returned no response";
 }
 
 if ($html === '') {
@@ -89,6 +89,13 @@ $branchResponse = @file_get_contents($harvestBranchUrl, false, stream_context_cr
 if ($branchResponse !== false && $branchResponse !== '') {
     $branchHtml = $branchResponse;
 }
+
+$treeHtml = @file_get_contents($treeModeUrl, false, stream_context_create([
+    'http' => [
+        'timeout' => 4,
+        'ignore_errors' => true,
+    ],
+]));
 
 proc_terminate($server);
 proc_close($server);
@@ -111,6 +118,15 @@ if ($branchHtml === '') {
 
 if (str_contains($branchHtml, '381a3a8')) {
     fail('Feature branch log still includes pre-fork commit 381a3a8.', $branchHtml);
+}
+
+if ($treeHtml === false || $treeHtml === '') {
+    fail('Tree mode page did not return HTML.');
+}
+
+assertContains('id="graph-view"', $treeHtml, 'Tree mode is missing the graph output container.');
+if (str_contains($treeHtml, 'Tree mode is not implemented yet')) {
+    fail('Tree mode still shows the old placeholder instead of graph output.', $treeHtml);
 }
 
 $rootPage = '';
