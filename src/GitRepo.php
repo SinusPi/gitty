@@ -91,7 +91,7 @@ final class GitRepo
             return [];
         }
 
-        $logArgs = ['log', '--pretty=format:%H%x1f%an%x1f%ad%x1f%s', '--date=iso-strict', '-n', (string) $limit, $ref];
+        $logArgs = ['log', '--pretty=format:%H%x1f%an%x1f%ad%x1f%D%x1f%s', '--date=iso-strict', '-n', (string) $limit, $ref];
 
         $headRef = $knownHeadBranch ?? $this->getHeadBranch();
         if ($headRef !== '' && $ref !== $headRef) {
@@ -101,7 +101,7 @@ final class GitRepo
             ));
 
             if ($otherBranches !== []) {
-                $logArgs = ['log', '--first-parent', '--pretty=format:%H%x1f%an%x1f%ad%x1f%s', '--date=iso-strict', '-n', (string) $limit, $ref, '--not'];
+                $logArgs = ['log', '--first-parent', '--pretty=format:%H%x1f%an%x1f%ad%x1f%D%x1f%s', '--date=iso-strict', '-n', (string) $limit, $ref, '--not'];
                 foreach ($otherBranches as $otherBranch) {
                     $logArgs[] = $otherBranch;
                 }
@@ -117,15 +117,18 @@ final class GitRepo
         $commits = [];
         foreach (preg_split('/\r\n|\r|\n/', $output) ?: [] as $line) {
             $parts = explode("\x1f", $line);
-            if (count($parts) < 4) {
+            if (count($parts) < 5) {
                 continue;
             }
+
+            $tags = $this->extractTagNames((string) $parts[3]);
+            $subject = trim((string) $parts[4]);
 
             $commits[] = [
                 'hash' => trim((string) $parts[0]),
                 'author' => trim((string) $parts[1]),
                 'date' => trim((string) $parts[2]),
-                'message' => trim((string) $parts[3]),
+                'message' => $this->prefixTagsToMessage($subject, $tags),
             ];
         }
 
@@ -209,7 +212,7 @@ final class GitRepo
 
     public function getLastCommit(): array
     {
-        [$output, $status] = GitCommandRunner::runWithStatus($this->path, ['log', '--all', '-1', '--pretty=format:%an%n%ad%n%s%n%b']);
+        [$output, $status] = GitCommandRunner::runWithStatus($this->path, ['log', '--all', '-1', '--pretty=format:%an%x1f%ad%x1f%D%x1f%s%x1f%b']);
 
         if ($status !== 0 || trim($output) === '') {
             return [
@@ -221,11 +224,12 @@ final class GitRepo
             ];
         }
 
-        $lines = preg_split('/\r\n|\r|\n/', $output);
-        $author = trim((string) ($lines[0] ?? ''));
-        $date = trim((string) ($lines[1] ?? ''));
-        $subject = trim((string) ($lines[2] ?? ''));
-        $body = trim(implode("\n", array_slice($lines, 3)));
+        $parts = explode("\x1f", $output, 5);
+        $author = trim((string) ($parts[0] ?? ''));
+        $date = trim((string) ($parts[1] ?? ''));
+        $tags = $this->extractTagNames((string) ($parts[2] ?? ''));
+        $subject = $this->prefixTagsToMessage(trim((string) ($parts[3] ?? '')), $tags);
+        $body = trim((string) ($parts[4] ?? ''));
 
         $fullMessage = trim($subject . ($body !== '' ? "\n" . $body : ''));
         if ($fullMessage === '') {
@@ -239,5 +243,30 @@ final class GitRepo
             'subject' => $subject !== '' ? $subject : 'No commit message',
             'full_message' => $fullMessage,
         ];
+    }
+
+    private function extractTagNames(string $decorations): array
+    {
+        $tags = [];
+        foreach (explode(',', $decorations) as $part) {
+            $trimmed = trim($part);
+            if (str_starts_with($trimmed, 'tag: ')) {
+                $tagName = trim(substr($trimmed, 5));
+                if ($tagName !== '') {
+                    $tags[] = $tagName;
+                }
+            }
+        }
+
+        return array_values(array_unique($tags));
+    }
+
+    private function prefixTagsToMessage(string $message, array $tags): string
+    {
+        if ($tags === []) {
+            return $message;
+        }
+
+        return '[' . implode(', ', $tags) . '] ' . $message;
     }
 }

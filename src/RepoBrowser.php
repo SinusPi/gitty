@@ -222,6 +222,7 @@ final class RepoBrowser
             .commit-hash { font-family: Consolas, monospace; font-size: 0.82rem; color: #1f2937; }
             .commit-meta { color: #4b5563; font-size: 0.82rem; }
             .commit-message { font-weight: 600; color: #111827; word-break: break-word; }
+            .tag-badge { display: inline-block; padding: 0.05rem 0.45rem; margin-right: 0.25rem; border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
             .graph-box { max-height: 420px; overflow: auto; border: 1px solid #d6d9df; border-radius: 8px; background: #0f172a; color: #e2e8f0; }
             .graph-output { margin: 0; padding: 1rem; font-family: Consolas, Monaco, monospace; font-size: 0.82rem; line-height: 1.45; white-space: pre; }
             .page-footer { margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #d6d9df; color: #475569; font-size: 0.85rem; }
@@ -232,8 +233,9 @@ final class RepoBrowser
         return (string) ob_get_clean();
     }
 
-    private function outputHtmlWrapper(string $headerHtml, string $contentHtml, string $footerHtml = '', string $scriptHtml = ''): string
+    private function renderHtmlWrapper(string $headerHtml, string $contentHtml, string $footerHtml = '', string $scriptHtml = ''): string
     {
+        ob_start();
         ?>
         <!DOCTYPE html>
         <html lang="en">
@@ -257,9 +259,16 @@ final class RepoBrowser
         </body>
         </html>
         <?php
+
+        return (string) ob_get_clean();
     }
 
-    private function renderRepoList(array $repos): void
+    private function outputHtmlWrapper(string $headerHtml, string $contentHtml, string $footerHtml = '', string $scriptHtml = ''): void
+    {
+        echo $this->renderHtmlWrapper($headerHtml, $contentHtml, $footerHtml, $scriptHtml);
+    }
+
+    private function renderRepoList(array $repos): string
     {
         ob_start();
 
@@ -267,14 +276,14 @@ final class RepoBrowser
             ?>
             <p class="empty">No repo folders configured. Set the GITTY_REPO_ROOTS environment variable or update the repo_roots list in config.php.</p>
             <?php
-            $this->outputHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
+            return $this->renderHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
         }
 
         if ($repos === []) {
             ?>
             <p class="empty">No bare Git repositories were found in the configured roots.</p>
             <?php
-            $this->outputHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
+            return $this->renderHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
         }
 
         foreach ($this->configuredRoots as $rootIndex => $root) {
@@ -308,7 +317,7 @@ final class RepoBrowser
             <?php
         }
 
-        $this->outputHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
+        return $this->renderHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
     }
 
     private function renderRepoMeta(GitRepo $repo): string
@@ -319,13 +328,35 @@ final class RepoBrowser
         if ($lastCommit['exists'] === false) {
             $lastCommitText = 'No commits yet';
             $hoverText = 'This repository has no commits yet.';
+            $subjectHtml = htmlspecialchars($lastCommitText, ENT_QUOTES, 'UTF-8');
         } else {
             $formatted = trim($lastCommit['author'] !== '' ? $lastCommit['author'] : 'unknown');
-            $lastCommitText = $formatted . ' • ' . $lastCommit['date'] . ' • ' . $lastCommit['subject'];
+            $subjectHtml = htmlspecialchars($formatted . ' • ' . $lastCommit['date'] . ' • ', ENT_QUOTES, 'UTF-8')
+                . $this->renderTagBadgesInMessage((string) $lastCommit['subject']);
             $hoverText = $lastCommit['full_message'];
         }
 
-        return '<div class="repo-meta"><strong>Commits:</strong> ' . (int) $commitCount . ' &nbsp;|&nbsp; <strong>Last:</strong> <span title="' . htmlspecialchars($hoverText, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($lastCommitText, ENT_QUOTES, 'UTF-8') . '</span></div>';
+        return '<div class="repo-meta"><strong>Commits:</strong> ' . (int) $commitCount . ' &nbsp;|&nbsp; <strong>Last:</strong> <span title="' . htmlspecialchars($hoverText, ENT_QUOTES, 'UTF-8') . '">' . $subjectHtml . '</span></div>';
+    }
+
+    private function renderTagBadgesInMessage(string $message): string
+    {
+        if (preg_match('/^\[([^\]]+)\]\s*(.*)$/', $message, $matches) !== 1) {
+            return htmlspecialchars($message, ENT_QUOTES, 'UTF-8');
+        }
+
+        $tags = array_values(array_filter(array_map('trim', explode(',', (string) $matches[1])), static fn (string $tag): bool => $tag !== ''));
+        if ($tags === []) {
+            return htmlspecialchars($message, ENT_QUOTES, 'UTF-8');
+        }
+
+        $badgeParts = [];
+        foreach ($tags as $tag) {
+            $badgeParts[] = '<span class="tag-badge">' . htmlspecialchars($tag, ENT_QUOTES, 'UTF-8') . '</span>';
+        }
+
+        $subject = htmlspecialchars(trim((string) ($matches[2] ?? '')), ENT_QUOTES, 'UTF-8');
+        return implode(' ', $badgeParts) . ($subject !== '' ? ' ' . $subject : '');
     }
 
     private function buildTree(array $repos): array
@@ -534,7 +565,7 @@ final class RepoBrowser
                                 <div class="commit-hash"><?= htmlspecialchars(substr($hash, 0, 8), ENT_QUOTES, 'UTF-8') ?></div>
                                 <div class="commit-meta"><?= htmlspecialchars($author, ENT_QUOTES, 'UTF-8') ?></div>
                                 <div class="commit-meta"><?= htmlspecialchars($date, ENT_QUOTES, 'UTF-8') ?></div>
-                                <div class="commit-message"><?= htmlspecialchars($message, ENT_QUOTES, 'UTF-8') ?></div>
+                                <div class="commit-message"><?= $this->renderTagBadgesInMessage($message) ?></div>
                             </div>
                         <?php endforeach; ?>
                     <?php endif; ?>
@@ -558,6 +589,6 @@ final class RepoBrowser
             . json_encode($selectedBranch, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT)
             . ';</script>';
 
-        $this->outputHtmlWrapper($headerHtml, $contentHtml, $footerHtml, $scriptHtml);
+        return $this->renderHtmlWrapper($headerHtml, $contentHtml, $footerHtml, $scriptHtml);
     }
 }
