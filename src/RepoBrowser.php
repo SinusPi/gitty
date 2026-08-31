@@ -83,12 +83,12 @@ final class RepoBrowser
         if (is_string($selectedRepo) && $selectedRepo !== '' && is_string($selectedCommand)) {
             $resolvedRepo = $this->resolveRepoFromSelector($selectedRepo, $repos);
             if ($resolvedRepo !== null) {
-                $this->renderRepoDetail($resolvedRepo, $selectedCommand, $repos);
+                echo $this->renderRepoDetail($resolvedRepo, $selectedCommand, $repos);
                 return;
             }
         }
 
-        $this->renderRepoList($repos);
+        echo $this->renderRepoList($repos);
     }
 
     private function resolveRepoFromSelector(string $selector, array $repos): ?GitRepo
@@ -232,7 +232,7 @@ final class RepoBrowser
         return (string) ob_get_clean();
     }
 
-    private function renderHtmlWrapper(string $headerHtml, string $contentHtml, string $footerHtml = '', string $scriptHtml = ''): void
+    private function outputHtmlWrapper(string $headerHtml, string $contentHtml, string $footerHtml = '', string $scriptHtml = ''): string
     {
         ?>
         <!DOCTYPE html>
@@ -267,16 +267,14 @@ final class RepoBrowser
             ?>
             <p class="empty">No repo folders configured. Set the GITTY_REPO_ROOTS environment variable or update the repo_roots list in config.php.</p>
             <?php
-            $this->renderHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
-            return;
+            $this->outputHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
         }
 
         if ($repos === []) {
             ?>
             <p class="empty">No bare Git repositories were found in the configured roots.</p>
             <?php
-            $this->renderHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
-            return;
+            $this->outputHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
         }
 
         foreach ($this->configuredRoots as $rootIndex => $root) {
@@ -304,13 +302,13 @@ final class RepoBrowser
             <?php endif; ?>
             <ul class="repo-tree">
                 <?php foreach ($tree as $node) {
-                    $this->renderTreeNode($node);
+                    echo $this->renderTreeNode($node);
                 } ?>
             </ul>
             <?php
         }
 
-        $this->renderHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
+        $this->outputHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
     }
 
     private function renderRepoMeta(GitRepo $repo): string
@@ -401,18 +399,20 @@ final class RepoBrowser
         return basename($normalized) === '.git' ? dirname($normalized) : $normalized;
     }
 
-    private function renderTreeNode(array $node): void
+    private function renderTreeNode(array $node): string
     {
         $hasChildren = !empty($node['children']);
+
+        ob_start();
 
         if ($hasChildren) {
             ?>
             <li class="tree-node">
                 <div class="tree-folder open" onclick="this.classList.toggle('open');"><?= htmlspecialchars((string) $node['name'], ENT_QUOTES, 'UTF-8') ?></div>
                 <ul class="tree-children">
-                    <?php foreach ($node['children'] as $child) {
-                        $this->renderTreeNode($child);
-                    } ?>
+                    <?php foreach ($node['children'] as $child): ?>
+                        <?= $this->renderTreeNode($child) ?>
+                    <?php endforeach; ?>
 
                     <?php foreach ($node['repos'] as $repo): ?>
                         <?php $detailHref = '?repo=' . rawurlencode($this->getRepoSelector($repo)) . '&amp;command=branch'; ?>
@@ -425,7 +425,7 @@ final class RepoBrowser
                 </ul>
             </li>
             <?php
-            return;
+            return (string) ob_get_clean();
         }
 
         foreach ($node['repos'] as $repo):
@@ -438,9 +438,11 @@ final class RepoBrowser
             </li>
             <?php
         endforeach;
+
+        return (string) ob_get_clean();
     }
 
-    private function renderRepoDetail(GitRepo $repo, string $command, array $repos): void
+    private function renderRepoDetail(GitRepo $repo, string $command, array $repos): string
     {
         $requestStartedAt = microtime(true);
         $detailDataStartedAt = microtime(true);
@@ -556,6 +558,6 @@ final class RepoBrowser
             . json_encode($selectedBranch, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT)
             . ';</script>';
 
-        $this->renderHtmlWrapper($headerHtml, $contentHtml, $footerHtml, $scriptHtml);
+        $this->outputHtmlWrapper($headerHtml, $contentHtml, $footerHtml, $scriptHtml);
     }
 }
