@@ -184,44 +184,98 @@ final class RepoBrowser
         return $root instanceof RepoRoot ? $root->getDescription() : '';
     }
 
+    private function renderSharedStyles(): string
+    {
+        ob_start();
+        ?>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 2rem; background: #f4f5f7; color: #222; }
+            a { color: #0a58ca; text-decoration: none; }
+            .layout { max-width: 1120px; }
+            h1 { margin: 0 0 1rem; }
+            .page-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+            .repo-root-header { margin: 1.5rem 0 0.75rem; font-size: 1.1rem; font-weight: 700; }
+            .repo-root-description { margin: -0.35rem 0 0.75rem; color: #64748b; font-size: 0.9rem; }
+            .repo-tree { list-style: none; padding-left: 0; max-width: 900px; }
+            .tree-node { margin-bottom: 0.75rem; }
+            .tree-folder { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 0.9rem 1rem; margin-bottom: 0.5rem; cursor: pointer; user-select: none; }
+            .tree-folder::before { content: "▸ "; }
+            .tree-folder.open::before { content: "▾ "; }
+            .tree-children { list-style: none; padding-left: 1.25rem; margin: 0; display: none; }
+            .tree-folder.open + .tree-children { display: block; }
+            .repo-item { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+            .repo-item:hover { border-color: #8bb3ff; box-shadow: 0 0 0 2px rgba(13,110,253,0.08); }
+            .repo-item:focus { outline: 2px solid #0d6efd; outline-offset: 2px; }
+            .repo-name { color: #0a58ca; text-decoration: none; font-weight: 600; margin-bottom: 0.25rem; }
+            .repo-meta { color: #555; margin-top: 0.35rem; font-size: 0.9rem; }
+            .empty { color: #666; font-style: italic; }
+            .box { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 1rem; }
+            .toolbar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+            .branch-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+            .branch-button { display: inline-block; border: 1px solid #d6d9df; background: #fff; padding: 0.45rem 0.8rem; border-radius: 999px; text-decoration: none; font: inherit; color: #111827; }
+            .branch-button.is-selected { background: #dbeafe; border-color: #60a5fa; font-weight: 700; }
+            .button { display: inline-block; border: 1px solid #d7ddf6; background: #eef2ff; color: #1f2a44; border-radius: 6px; padding: 0.7rem 1rem; text-decoration: none; font: inherit; }
+            .button.is-active { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+            .commit-box { max-height: 420px; overflow-y: auto; border: 1px solid #d6d9df; border-radius: 8px; background: #fff; }
+            .commit-row { display: grid; grid-template-columns: 100px 200px 220px 1fr; gap: 0.85rem; padding: 0.8rem 1rem; border-bottom: 1px solid #eef2f7; }
+            .commit-row:last-child { border-bottom: 0; }
+            .commit-hash { font-family: Consolas, monospace; font-size: 0.82rem; color: #1f2937; }
+            .commit-meta { color: #4b5563; font-size: 0.82rem; }
+            .commit-message { font-weight: 600; color: #111827; word-break: break-word; }
+            .graph-box { max-height: 420px; overflow: auto; border: 1px solid #d6d9df; border-radius: 8px; background: #0f172a; color: #e2e8f0; }
+            .graph-output { margin: 0; padding: 1rem; font-family: Consolas, Monaco, monospace; font-size: 0.82rem; line-height: 1.45; white-space: pre; }
+            .page-footer { margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #d6d9df; color: #475569; font-size: 0.85rem; }
+            .placeholder { padding: 1rem; color: #475569; background: #f8fafc; border: 1px solid #dbe2ed; border-radius: 8px; }
+        </style>
+        <?php
+
+        return (string) ob_get_clean();
+    }
+
+    private function renderHtmlWrapper(string $headerHtml, string $contentHtml, string $footerHtml = '', string $scriptHtml = ''): void
+    {
+        ?>
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Git Repo Browser</title>
+            <?= $this->renderSharedStyles() ?>
+        </head>
+        <body>
+            <div class="layout">
+                <?= $headerHtml ?>
+                <?= $contentHtml ?>
+                <?php if ($footerHtml !== ''): ?>
+                    <footer class="page-footer"><?= $footerHtml ?></footer>
+                <?php endif; ?>
+                <?php if ($scriptHtml !== ''): ?>
+                    <?= $scriptHtml ?>
+                <?php endif; ?>
+            </div>
+        </body>
+        </html>
+        <?php
+    }
+
     private function renderRepoList(array $repos): void
     {
-        echo '<!DOCTYPE html>';
-        echo '<html lang="en">';
-        echo '<head>';
-        echo '<meta charset="UTF-8">';
-        echo '<meta name="viewport" content="width=device-width, initial-scale=1.0">';
-        echo '<title>Git Repo Browser</title>';
-        echo '<style>';
-        echo 'body { font-family: Arial, sans-serif; margin: 2rem; background: #f4f5f7; color: #222; }';
-        echo 'h1 { margin-bottom: 1rem; }';
-        echo '.repo-root-header { margin: 1.5rem 0 0.75rem; font-size: 1.1rem; font-weight: 700; }';
-        echo '.repo-root-description { margin: -0.35rem 0 0.75rem; color: #64748b; font-size: 0.9rem; }';
-        echo '.repo-tree { list-style: none; padding-left: 0; max-width: 900px; }';
-        echo '.tree-node { margin-bottom: 0.75rem; }';
-        echo '.tree-folder { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 0.9rem 1rem; margin-bottom: 0.5rem; cursor: pointer; user-select: none; }';
-        echo '.tree-folder::before { content: "▸ "; }';
-        echo '.tree-folder.open::before { content: "▾ "; }';
-        echo '.tree-children { list-style: none; padding-left: 1.25rem; margin: 0; display: none; }';
-        echo '.tree-folder.open + .tree-children { display: block; }';
-        echo '.repo-item { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease; }';
-        echo '.repo-item:hover { border-color: #8bb3ff; box-shadow: 0 0 0 2px rgba(13,110,253,0.08); }';
-        echo '.repo-item:focus { outline: 2px solid #0d6efd; outline-offset: 2px; }';
-        echo '.repo-name { color: #0a58ca; text-decoration: none; font-weight: 600; margin-bottom: 0.25rem; }';
-        echo '.repo-meta { color: #555; margin-top: 0.35rem; font-size: 0.9rem; }';
-        echo '.empty { color: #666; font-style: italic; }';
-        echo '</style>';
-        echo '</head>';
-        echo '<body>';
-        echo '<h1>Git Repo Browser</h1>';
+        ob_start();
 
         if ($this->configuredRoots === []) {
-            echo '<p class="empty">No repo folders configured. Set the GITTY_REPO_ROOTS environment variable or update the repo_roots list in config.php.</p>';
+            ?>
+            <p class="empty">No repo folders configured. Set the GITTY_REPO_ROOTS environment variable or update the repo_roots list in config.php.</p>
+            <?php
+            $this->renderHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
             return;
         }
 
         if ($repos === []) {
-            echo '<p class="empty">No bare Git repositories were found in the configured roots.</p>';
+            ?>
+            <p class="empty">No bare Git repositories were found in the configured roots.</p>
+            <?php
+            $this->renderHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
             return;
         }
 
@@ -241,21 +295,22 @@ final class RepoBrowser
                 continue;
             }
 
-            echo '<div class="repo-root-header">Repo root ' . ($rootIndex + 1) . ': ' . htmlspecialchars($this->getRepoRootLabel($rootIndex), ENT_QUOTES, 'UTF-8') . '</div>';
             $rootDescription = $this->getRepoRootDescription($rootIndex);
-            if ($rootDescription !== '') {
-                echo '<div class="repo-root-description">' . htmlspecialchars($rootDescription, ENT_QUOTES, 'UTF-8') . '</div>';
-            }
             $tree = $this->buildTree($rootRepos);
-            echo '<ul class="repo-tree">';
-            foreach ($tree as $node) {
-                $this->renderTreeNode($node);
-            }
-            echo '</ul>';
+            ?>
+            <div class="repo-root-header">Repo root <?= $rootIndex + 1 ?>: <?= htmlspecialchars($this->getRepoRootLabel($rootIndex), ENT_QUOTES, 'UTF-8') ?></div>
+            <?php if ($rootDescription !== ''): ?>
+                <div class="repo-root-description"><?= htmlspecialchars($rootDescription, ENT_QUOTES, 'UTF-8') ?></div>
+            <?php endif; ?>
+            <ul class="repo-tree">
+                <?php foreach ($tree as $node) {
+                    $this->renderTreeNode($node);
+                } ?>
+            </ul>
+            <?php
         }
 
-        echo '</body>';
-        echo '</html>';
+        $this->renderHtmlWrapper('<h1>Git Repo Browser</h1>', (string) ob_get_clean());
     }
 
     private function renderRepoMeta(GitRepo $repo): string
@@ -349,39 +404,40 @@ final class RepoBrowser
     private function renderTreeNode(array $node): void
     {
         $hasChildren = !empty($node['children']);
-        $hasRepos = !empty($node['repos']);
 
         if ($hasChildren) {
-            echo '<li class="tree-node">';
-            echo '<div class="tree-folder open" onclick="this.classList.toggle(\'open\');">' . htmlspecialchars((string) $node['name'], ENT_QUOTES, 'UTF-8') . '</div>';
-            echo '<ul class="tree-children">';
+            ?>
+            <li class="tree-node">
+                <div class="tree-folder open" onclick="this.classList.toggle('open');"><?= htmlspecialchars((string) $node['name'], ENT_QUOTES, 'UTF-8') ?></div>
+                <ul class="tree-children">
+                    <?php foreach ($node['children'] as $child) {
+                        $this->renderTreeNode($child);
+                    } ?>
 
-            foreach ($node['children'] as $child) {
-                $this->renderTreeNode($child);
-            }
-
-            foreach ($node['repos'] as $repo) {
-                $detailHref = '?repo=' . rawurlencode($this->getRepoSelector($repo)) . '&amp;command=branch';
-                echo '<li class="repo-item" tabindex="0" role="button" onclick="window.location.href=\'' . addslashes($detailHref) . '\';" onkeydown="if (event.key === \"Enter\" || event.key === \" \") { event.preventDefault(); window.location.href=\'' . addslashes($detailHref) . '\'; }">';
-                echo '<div class="repo-name">' . htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') . '</div>';
-                echo '<div class="repo-meta">' . htmlspecialchars($this->getRelativeDisplayPath($repo), ENT_QUOTES, 'UTF-8') . '</div>';
-                echo $this->renderRepoMeta($repo);
-                echo '</li>';
-            }
-
-            echo '</ul>';
-            echo '</li>';
+                    <?php foreach ($node['repos'] as $repo): ?>
+                        <?php $detailHref = '?repo=' . rawurlencode($this->getRepoSelector($repo)) . '&amp;command=branch'; ?>
+                        <li class="repo-item" tabindex="0" role="button" onclick="window.location.href='<?= addslashes($detailHref) ?>';" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.location.href='<?= addslashes($detailHref) ?>'; }">
+                            <div class="repo-name"><?= htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') ?></div>
+                            <div class="repo-meta"><?= htmlspecialchars($this->getRelativeDisplayPath($repo), ENT_QUOTES, 'UTF-8') ?></div>
+                            <?= $this->renderRepoMeta($repo) ?>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            </li>
+            <?php
             return;
         }
 
-        foreach ($node['repos'] as $repo) {
+        foreach ($node['repos'] as $repo):
             $detailHref = '?repo=' . rawurlencode($this->getRepoSelector($repo)) . '&amp;command=branch';
-            echo '<li class="repo-item" tabindex="0" role="button" onclick="window.location.href=\'' . addslashes($detailHref) . '\';" onkeydown="if (event.key === \"Enter\" || event.key === \" \") { event.preventDefault(); window.location.href=\'' . addslashes($detailHref) . '\'; }">';
-            echo '<div class="repo-name">' . htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') . '</div>';
-            echo '<div class="repo-meta">' . htmlspecialchars($this->getRelativeDisplayPath($repo), ENT_QUOTES, 'UTF-8') . '</div>';
-            echo $this->renderRepoMeta($repo);
-            echo '</li>';
-        }
+            ?>
+            <li class="repo-item" tabindex="0" role="button" onclick="window.location.href='<?= addslashes($detailHref) ?>';" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.location.href='<?= addslashes($detailHref) ?>'; }">
+                <div class="repo-name"><?= htmlspecialchars($repo->getDisplayName(), ENT_QUOTES, 'UTF-8') ?></div>
+                <div class="repo-meta"><?= htmlspecialchars($this->getRelativeDisplayPath($repo), ENT_QUOTES, 'UTF-8') ?></div>
+                <?= $this->renderRepoMeta($repo) ?>
+            </li>
+            <?php
+        endforeach;
     }
 
     private function renderRepoDetail(GitRepo $repo, string $command, array $repos): void
@@ -421,102 +477,85 @@ final class RepoBrowser
             'total_ms' => round((microtime(true) - $requestStartedAt) * 1000, 1),
         ];
 
-        echo '<!DOCTYPE html>';
-        echo '<html lang="en">';
-        echo '<head>';
-        echo '<meta charset="UTF-8">';
-        echo '<meta name="viewport" content="width=device-width, initial-scale=1.0">';
-        echo '<title>Git Repo Browser</title>';
-        echo '<style>';
-        echo 'body { font-family: Arial, sans-serif; margin: 2rem; background: #f4f5f7; color: #222; }';
-        echo 'a { color: #0a58ca; text-decoration: none; }';
-        echo '.layout { max-width: 1120px; }';
-        echo '.page-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }';
-        echo '.box { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 1rem; }';
-        echo '.toolbar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }';
-        echo '.branch-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }';
-        echo '.branch-button { display: inline-block; border: 1px solid #d6d9df; background: #fff; padding: 0.45rem 0.8rem; border-radius: 999px; text-decoration: none; font: inherit; color: #111827; }';
-        echo '.branch-button.is-selected { background: #dbeafe; border-color: #60a5fa; font-weight: 700; }';
-        echo '.button { display: inline-block; border: 1px solid #d7ddf6; background: #eef2ff; color: #1f2a44; border-radius: 6px; padding: 0.7rem 1rem; text-decoration: none; font: inherit; }';
-        echo '.button.is-active { background: #0d6efd; color: #fff; border-color: #0d6efd; }';
-        echo '.mode-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: #475569; margin: 1rem 0 0.5rem; font-weight: 700; }';
-        echo '.commit-box { max-height: 420px; overflow-y: auto; border: 1px solid #d6d9df; border-radius: 8px; background: #fff; }';
-        echo '.commit-row { display: grid; grid-template-columns: 100px 200px 220px 1fr; gap: 0.85rem; padding: 0.8rem 1rem; border-bottom: 1px solid #eef2f7; }';
-        echo '.commit-row:last-child { border-bottom: 0; }';
-        echo '.commit-hash { font-family: Consolas, monospace; font-size: 0.82rem; color: #1f2937; }';
-        echo '.commit-meta { color: #4b5563; font-size: 0.82rem; }';
-        echo '.commit-message { font-weight: 600; color: #111827; word-break: break-word; }';
-        echo '.graph-box { max-height: 420px; overflow: auto; border: 1px solid #d6d9df; border-radius: 8px; background: #0f172a; color: #e2e8f0; }';
-        echo '.graph-output { margin: 0; padding: 1rem; font-family: Consolas, Monaco, monospace; font-size: 0.82rem; line-height: 1.45; white-space: pre; }';
-        echo '.timing-meta { color: #475569; font-size: 0.85rem; margin-top: 0.45rem; }';
-        echo '.page-footer { margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #d6d9df; color: #475569; font-size: 0.85rem; }';
-        echo '.placeholder { padding: 1rem; color: #475569; background: #f8fafc; border: 1px solid #dbe2ed; border-radius: 8px; }';
-        echo '</style>';
-        echo '</head>';
-        echo '<body>';
-        echo '<div class="layout">';
-        echo '<div class="page-header">';
-        echo '<p><a href="./">← Back to repo list</a></p>';
-        echo '<h1>' . htmlspecialchars($repoData['display_name'], ENT_QUOTES, 'UTF-8') . '</h1>';
-        echo '</div>';
+        ob_start();
+        ?>
+        <div class="page-header">
+            <p><a href="./">← Back to repo list</a></p>
+            <h1><?= htmlspecialchars($repoData['display_name'], ENT_QUOTES, 'UTF-8') ?></h1>
+        </div>
+        <?php
+        $headerHtml = (string) ob_get_clean();
 
-        echo '<div class="toolbar box">';
-        echo '<div class="branch-list" id="branch-list" aria-label="Branches">';
-        foreach ($repoData['branches'] as $branch) {
-            $isSelected = $branch === $selectedBranch;
-            $branchUrl = $detailUrlBase . '&amp;branch=' . rawurlencode($branch) . '&amp;mode=branch';
-            echo '<a class="branch-button' . ($isSelected ? ' is-selected' : '') . '" href="' . $branchUrl . '" aria-pressed="' . ($isSelected ? 'true' : 'false') . '">' . htmlspecialchars($branch, ENT_QUOTES, 'UTF-8') . '</a>';
-        }
-        echo '</div>';
+        ob_start();
         $treeUrl = $detailUrlBase . '&amp;branch=' . rawurlencode($selectedBranch) . '&amp;mode=tree';
-        echo '<a class="button' . ($selectedMode === 'tree' ? ' is-active' : '') . '" href="' . $treeUrl . '">Tree</a>';
-        echo '</div>';
+        ?>
+        <div class="toolbar box">
+            <div class="branch-list" id="branch-list" aria-label="Branches">
+                <?php foreach ($repoData['branches'] as $branch): ?>
+                    <?php
+                    $isSelected = $branch === $selectedBranch;
+                    $branchUrl = $detailUrlBase . '&amp;branch=' . rawurlencode($branch) . '&amp;mode=branch';
+                    ?>
+                    <a class="branch-button<?= $isSelected ? ' is-selected' : '' ?>" href="<?= $branchUrl ?>" aria-pressed="<?= $isSelected ? 'true' : 'false' ?>"><?= htmlspecialchars($branch, ENT_QUOTES, 'UTF-8') ?></a>
+                <?php endforeach; ?>
+            </div>
+            <a class="button<?= $selectedMode === 'tree' ? ' is-active' : '' ?>" href="<?= $treeUrl ?>">Tree</a>
+        </div>
 
-        echo '<div class="box" style="margin-top: 1rem;">';
-        echo '<p><strong>Repository:</strong> ' . htmlspecialchars((string) $repoData['display_path'], ENT_QUOTES, 'UTF-8') . '</p>';
-        echo '<p><strong>Selected branch:</strong> ' . htmlspecialchars($selectedBranch, ENT_QUOTES, 'UTF-8') . '</p>';
-        echo '</div>';
+        <div class="box" style="margin-top: 1rem;">
+            <p><strong>Repository:</strong> <?= htmlspecialchars((string) $repoData['display_path'], ENT_QUOTES, 'UTF-8') ?></p>
+            <p><strong>Selected branch:</strong> <?= htmlspecialchars($selectedBranch, ENT_QUOTES, 'UTF-8') ?></p>
+        </div>
 
-        echo '<div class="box" style="margin-top: 1rem;">';
-        if ($selectedMode === 'tree') {
-            if (trim($branchGraph) === '') {
-                echo '<div class="placeholder">No graph output available for this branch yet.</div>';
-            } else {
-                echo '<div class="graph-box" id="graph-view" aria-live="polite">';
-                echo '<pre class="graph-output">' . $this->ansiToHtml($branchGraph) . '</pre>';
-                echo '</div>';
-            }
-        } else {
-            echo '<div class="commit-box" id="commit-list" aria-live="polite">';
-            if ($branchCommits === []) {
-                echo '<div class="placeholder">No commits available for this branch yet.</div>';
-            } else {
-                foreach ($branchCommits as $commit) {
-                    $hash = (string) ($commit['hash'] ?? '');
-                    $author = (string) ($commit['author'] ?? 'unknown');
-                    $date = (string) ($commit['date'] ?? 'unknown');
-                    $message = (string) ($commit['message'] ?? '(no message)');
-                    echo '<div class="commit-row">';
-                    echo '<div class="commit-hash">' . htmlspecialchars(substr($hash, 0, 8), ENT_QUOTES, 'UTF-8') . '</div>';
-                    echo '<div class="commit-meta">' . htmlspecialchars($author, ENT_QUOTES, 'UTF-8') . '</div>';
-                    echo '<div class="commit-meta">' . htmlspecialchars($date, ENT_QUOTES, 'UTF-8') . '</div>';
-                    echo '<div class="commit-message">' . htmlspecialchars($message, ENT_QUOTES, 'UTF-8') . '</div>';
-                    echo '</div>';
-                }
-            }
-            echo '</div>';
-        }
-        echo '</div>';
+        <div class="box" style="margin-top: 1rem;">
+            <?php if ($selectedMode === 'tree'): ?>
+                <?php if (trim($branchGraph) === ''): ?>
+                    <div class="placeholder">No graph output available for this branch yet.</div>
+                <?php else: ?>
+                    <div class="graph-box" id="graph-view" aria-live="polite">
+                        <pre class="graph-output"><?= $this->ansiToHtml($branchGraph) ?></pre>
+                    </div>
+                <?php endif; ?>
+            <?php else: ?>
+                <div class="commit-box" id="commit-list" aria-live="polite">
+                    <?php if ($branchCommits === []): ?>
+                        <div class="placeholder">No commits available for this branch yet.</div>
+                    <?php else: ?>
+                        <?php foreach ($branchCommits as $commit): ?>
+                            <?php
+                            $hash = (string) ($commit['hash'] ?? '');
+                            $author = (string) ($commit['author'] ?? 'unknown');
+                            $date = (string) ($commit['date'] ?? 'unknown');
+                            $message = (string) ($commit['message'] ?? '(no message)');
+                            ?>
+                            <div class="commit-row">
+                                <div class="commit-hash"><?= htmlspecialchars(substr($hash, 0, 8), ENT_QUOTES, 'UTF-8') ?></div>
+                                <div class="commit-meta"><?= htmlspecialchars($author, ENT_QUOTES, 'UTF-8') ?></div>
+                                <div class="commit-meta"><?= htmlspecialchars($date, ENT_QUOTES, 'UTF-8') ?></div>
+                                <div class="commit-message"><?= htmlspecialchars($message, ENT_QUOTES, 'UTF-8') ?></div>
+                            </div>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+        </div>
+        <?php
 
-        echo '<footer class="page-footer">';
-        echo '<strong>Timing:</strong> data ' . htmlspecialchars((string) $repoData['timing']['detail_data_ms'], ENT_QUOTES, 'UTF-8') . ' ms, branch ' . htmlspecialchars((string) $repoData['timing']['selected_branch_ms'], ENT_QUOTES, 'UTF-8') . ' ms, total ' . htmlspecialchars((string) $repoData['timing']['total_ms'], ENT_QUOTES, 'UTF-8') . ' ms';
-        echo '</footer>';
+        $contentHtml = (string) ob_get_clean();
+        $footerHtml = '<strong>Timing:</strong> data '
+            . htmlspecialchars((string) $repoData['timing']['detail_data_ms'], ENT_QUOTES, 'UTF-8')
+            . ' ms, branch '
+            . htmlspecialchars((string) $repoData['timing']['selected_branch_ms'], ENT_QUOTES, 'UTF-8')
+            . ' ms, total '
+            . htmlspecialchars((string) $repoData['timing']['total_ms'], ENT_QUOTES, 'UTF-8')
+            . ' ms';
+        $scriptHtml = '<script type="application/json" id="repo-data">'
+            . json_encode($repoData, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT)
+            . '</script>'
+            . '<script>const selectedBranch = '
+            . json_encode($selectedBranch, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT)
+            . ';</script>';
 
-        echo '<script type="application/json" id="repo-data">' . json_encode($repoData, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) . '</script>';
-        echo '<script>';
-        echo 'const selectedBranch = ' . json_encode($selectedBranch, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) . ';';
-        echo '</script>';
-        echo '</body>';
-        echo '</html>';
+        $this->renderHtmlWrapper($headerHtml, $contentHtml, $footerHtml, $scriptHtml);
     }
 }
