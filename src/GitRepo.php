@@ -197,7 +197,7 @@ final class GitRepo
 
     public function getCommitCount(): int
     {
-        [$output, $status] = GitCommandRunner::runWithStatus($this->path, ['rev-list', '--count', 'HEAD']);
+        [$output, $status] = GitCommandRunner::runWithStatus($this->path, ['rev-list', '--all', '--count']);
 
         if ($status !== 0) {
             return 0;
