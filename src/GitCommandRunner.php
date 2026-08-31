@@ -4,6 +4,18 @@ declare(strict_types=1);
 
 final class GitCommandRunner
 {
+    private static array $executedCommands = [];
+
+    public static function resetExecutedCommands(): void
+    {
+        self::$executedCommands = [];
+    }
+
+    public static function getExecutedCommands(): array
+    {
+        return self::$executedCommands;
+    }
+
     public static function run(string $repoPath, array $arguments): string
     {
         [$output, $status] = self::runWithStatus($repoPath, $arguments);
@@ -21,6 +33,8 @@ final class GitCommandRunner
         foreach ($arguments as $argument) {
             $command[] = (string) $argument;
         }
+
+        self::$executedCommands[] = self::redactCommandForDisplay($command);
 
         $descriptors = [
             0 => ['pipe', 'r'],
@@ -46,5 +60,21 @@ final class GitCommandRunner
         }
 
         return [$output, $status];
+    }
+
+    private static function redactCommandForDisplay(array $command): string
+    {
+        $safe = [];
+        foreach ($command as $part) {
+            $text = (string) $part;
+            if (str_starts_with($text, '--git-dir=')) {
+                $safe[] = '--git-dir=<repo>';
+                continue;
+            }
+
+            $safe[] = $text;
+        }
+
+        return implode(' ', $safe);
     }
 }

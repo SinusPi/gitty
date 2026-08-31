@@ -74,6 +74,8 @@ final class RepoBrowser
 
     public function display(): void
     {
+        GitCommandRunner::resetExecutedCommands();
+
         $scanner = new GitRepoScanner(array_map(static fn (RepoRoot $root): string => $root->getPath(), $this->configuredRoots));
         $repos = $scanner->findRepos();
 
@@ -226,6 +228,11 @@ final class RepoBrowser
             .graph-box { max-height: 420px; overflow: auto; border: 1px solid #d6d9df; border-radius: 8px; background: #0f172a; color: #e2e8f0; }
             .graph-output { margin: 0; padding: 1rem; font-family: Consolas, Monaco, monospace; font-size: 0.82rem; line-height: 1.45; white-space: pre; }
             .page-footer { margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #d6d9df; color: #475569; font-size: 0.85rem; }
+            .command-log { margin-top: 0.5rem; }
+            .command-log summary { cursor: pointer; font-weight: 600; }
+            .command-log-list { margin: 0.5rem 0 0; padding-left: 1.1rem; }
+            .command-log-item { margin: 0.2rem 0; }
+            .command-line { font-family: Consolas, Monaco, monospace; font-size: 0.8rem; color: #334155; }
             .placeholder { padding: 1rem; color: #475569; background: #f8fafc; border: 1px solid #dbe2ed; border-radius: 8px; }
         </style>
         <?php
@@ -357,6 +364,27 @@ final class RepoBrowser
 
         $subject = htmlspecialchars(trim((string) ($matches[2] ?? '')), ENT_QUOTES, 'UTF-8');
         return implode(' ', $badgeParts) . ($subject !== '' ? ' ' . $subject : '');
+    }
+
+    private function renderCommandLogFooter(array $commands): string
+    {
+        if ($commands === []) {
+            return '';
+        }
+
+        ob_start();
+        ?>
+        <details class="command-log">
+            <summary>Git commands (<?= count($commands) ?>)</summary>
+            <ol class="command-log-list">
+                <?php foreach ($commands as $command): ?>
+                    <li class="command-log-item"><span class="command-line"><?= htmlspecialchars((string) $command, ENT_QUOTES, 'UTF-8') ?></span></li>
+                <?php endforeach; ?>
+            </ol>
+        </details>
+        <?php
+
+        return (string) ob_get_clean();
     }
 
     private function buildTree(array $repos): array
@@ -581,7 +609,8 @@ final class RepoBrowser
             . htmlspecialchars((string) $repoData['timing']['selected_branch_ms'], ENT_QUOTES, 'UTF-8')
             . ' ms, total '
             . htmlspecialchars((string) $repoData['timing']['total_ms'], ENT_QUOTES, 'UTF-8')
-            . ' ms';
+            . ' ms'
+            . $this->renderCommandLogFooter(GitCommandRunner::getExecutedCommands());
         $scriptHtml = '<script type="application/json" id="repo-data">'
             . json_encode($repoData, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT)
             . '</script>'
