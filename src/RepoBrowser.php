@@ -213,11 +213,11 @@ final class RepoBrowser
             .empty { color: #666; font-style: italic; }
             .box { background: #fff; border: 1px solid #d6d9df; border-radius: 8px; padding: 1rem; }
             .toolbar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+            .mode-switch { margin-top: 0.75rem; }
+            .selector-label { color: #475569; font-size: 0.85rem; font-weight: 600; margin-right: 0.35rem; }
             .branch-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
             .branch-button { display: inline-block; border: 1px solid #d6d9df; background: #fff; padding: 0.45rem 0.8rem; border-radius: 999px; text-decoration: none; font: inherit; color: #111827; }
             .branch-button.is-selected { background: #dbeafe; border-color: #60a5fa; font-weight: 700; }
-            .button { display: inline-block; border: 1px solid #d7ddf6; background: #eef2ff; color: #1f2a44; border-radius: 6px; padding: 0.7rem 1rem; text-decoration: none; font: inherit; }
-            .button.is-active { background: #0d6efd; color: #fff; border-color: #0d6efd; }
             .commit-box { max-height: 420px; overflow-y: auto; border: 1px solid #d6d9df; border-radius: 8px; background: #fff; }
             .commit-row { display: grid; grid-template-columns: 100px 200px 220px 1fr; gap: 0.85rem; padding: 0.8rem 1rem; border-bottom: 1px solid #eef2f7; }
             .commit-row:last-child { border-bottom: 0; }
@@ -511,7 +511,7 @@ final class RepoBrowser
         $repoData['display_path'] = $this->getRelativeDisplayPath($repo);
 
         $selectedBranch = $repoData['head_branch'];
-        $selectedMode = 'branch';
+        $selectedMode = 'log';
 
         if (isset($_GET['branch']) && is_string($_GET['branch']) && $_GET['branch'] !== '') {
             $selectedBranch = $_GET['branch'];
@@ -519,6 +519,14 @@ final class RepoBrowser
 
         if (isset($_GET['mode']) && is_string($_GET['mode']) && $_GET['mode'] !== '') {
             $selectedMode = $_GET['mode'];
+        }
+
+        if ($selectedMode === 'branch') {
+            $selectedMode = 'log';
+        }
+
+        if ($selectedMode !== 'log' && $selectedMode !== 'tree') {
+            $selectedMode = 'log';
         }
 
         $detailUrlBase = '?repo=' . rawurlencode($this->getRepoSelector($repo)) . '&amp;command=branch';
@@ -548,24 +556,26 @@ final class RepoBrowser
         $headerHtml = (string) ob_get_clean();
 
         ob_start();
+        $logUrl = $detailUrlBase . '&amp;branch=' . rawurlencode($selectedBranch) . '&amp;mode=log';
         $treeUrl = $detailUrlBase . '&amp;branch=' . rawurlencode($selectedBranch) . '&amp;mode=tree';
         ?>
         <div class="toolbar box">
+            <span class="selector-label">Branches:</span>
             <div class="branch-list" id="branch-list" aria-label="Branches">
                 <?php foreach ($repoData['branches'] as $branch): ?>
                     <?php
                     $isSelected = $branch === $selectedBranch;
-                    $branchUrl = $detailUrlBase . '&amp;branch=' . rawurlencode($branch) . '&amp;mode=branch';
+                    $branchUrl = $detailUrlBase . '&amp;branch=' . rawurlencode($branch) . '&amp;mode=log';
                     ?>
                     <a class="branch-button<?= $isSelected ? ' is-selected' : '' ?>" href="<?= $branchUrl ?>" aria-pressed="<?= $isSelected ? 'true' : 'false' ?>"><?= htmlspecialchars($branch, ENT_QUOTES, 'UTF-8') ?></a>
                 <?php endforeach; ?>
             </div>
-            <a class="button<?= $selectedMode === 'tree' ? ' is-active' : '' ?>" href="<?= $treeUrl ?>">Tree</a>
         </div>
 
-        <div class="box" style="margin-top: 1rem;">
-            <p><strong>Repository:</strong> <?= htmlspecialchars((string) $repoData['display_path'], ENT_QUOTES, 'UTF-8') ?></p>
-            <p><strong>Selected branch:</strong> <?= htmlspecialchars($selectedBranch, ENT_QUOTES, 'UTF-8') ?></p>
+        <div class="toolbar box mode-switch">
+            <span class="selector-label">View mode:</span>
+            <a class="branch-button<?= $selectedMode === 'log' ? ' is-selected' : '' ?>" href="<?= $logUrl ?>">Log</a>
+            <a class="branch-button<?= $selectedMode === 'tree' ? ' is-selected' : '' ?>" href="<?= $treeUrl ?>">Tree</a>
         </div>
 
         <div class="box" style="margin-top: 1rem;">

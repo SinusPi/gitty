@@ -91,8 +91,9 @@ final class GitRepo
             return [];
         }
 
-        $logArgs = ['log', '--pretty=format:%H%x1f%an%x1f%ad%x1f%D%x1f%s', '--date=iso-strict', '-n', (string) $limit, $ref];
+        $logArgs = ['log', '--first-parent', '--pretty=format:%H%x1f%an%x1f%ad%x1f%D%x1f%s', '--date=iso-strict', '-n', (string) $limit, $ref];
 
+        /*
         $headRef = $knownHeadBranch ?? $this->getHeadBranch();
         if ($headRef !== '' && $ref !== $headRef) {
             $otherBranches = array_values(array_filter(
@@ -107,6 +108,7 @@ final class GitRepo
                 }
             }
         }
+        */
 
         [$output, $status] = GitCommandRunner::runWithStatus($this->path, $logArgs);
 
