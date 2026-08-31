@@ -209,7 +209,7 @@ final class GitRepo
 
     public function getLastCommit(): array
     {
-        [$output, $status] = GitCommandRunner::runWithStatus($this->path, ['log', '-1', '--pretty=format:%an%n%ad%n%s%n%b']);
+        [$output, $status] = GitCommandRunner::runWithStatus($this->path, ['log', '--all', '-1', '--pretty=format:%an%n%ad%n%s%n%b']);
 
         if ($status !== 0 || trim($output) === '') {
             return [
