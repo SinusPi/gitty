@@ -32,17 +32,20 @@ function normalizeConfiguredRoots(string|array|null $roots): array
     return array_values($normalized);
 }
 
-function getConfiguredRepoRoots(): array
+function loadConfiguredAppConfig(): array
 {
     $configPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'config.php';
-    $config = [];
-
-    if (is_file($configPath)) {
-        $loadedConfig = require $configPath;
-        if (is_array($loadedConfig)) {
-            $config = $loadedConfig;
-        }
+    if (!is_file($configPath)) {
+        return [];
     }
+
+    $loadedConfig = require $configPath;
+    return is_array($loadedConfig) ? $loadedConfig : [];
+}
+
+function getConfiguredRepoRoots(): array
+{
+    $config = loadConfiguredAppConfig();
 
     $defaultRoots = [];
     if (isset($config['repo_roots']) && is_array($config['repo_roots'])) {
@@ -55,6 +58,152 @@ function getConfiguredRepoRoots(): array
     }
 
     return normalizeConfiguredRoots($defaultRoots);
+}
+
+function normalizeRepoMetaOverridePath(string $path): string
+{
+    $normalized = trim(str_replace('\\', '/', $path));
+    return trim($normalized, '/');
+}
+
+function normalizeRepoRootSelectorToken(string $value): string
+{
+    $normalized = strtolower(trim($value));
+    if ($normalized === '') {
+        return '';
+    }
+
+    $normalized = str_replace(['\\', '/'], '-', $normalized);
+    $normalized = preg_replace('/\s+/', '-', $normalized) ?? '';
+    $normalized = preg_replace('/[^a-z0-9._-]+/', '-', $normalized) ?? '';
+    $normalized = preg_replace('/-+/', '-', $normalized) ?? '';
+
+    return trim($normalized, '-');
+}
+
+function buildRepoRootSelectorLookup(array $repoRoots): array
+{
+    $lookup = [];
+
+    foreach ($repoRoots as $index => $root) {
+        if (!$root instanceof RepoRoot) {
+            continue;
+        }
+
+        $oneBasedIndex = $index + 1;
+        $lookup[(string) $oneBasedIndex] = $oneBasedIndex;
+
+        $selectorSlug = $root->getSelectorSlug();
+        if ($selectorSlug !== '' && !isset($lookup[$selectorSlug])) {
+            $lookup[$selectorSlug] = $oneBasedIndex;
+        }
+    }
+
+    return $lookup;
+}
+
+function resolveRepoRootSelector(string|int $selector, array $repoRoots): ?int
+{
+    $trimmed = trim((string) $selector);
+    if ($trimmed === '') {
+        return null;
+    }
+
+    if (ctype_digit($trimmed)) {
+        $rootIndex = (int) $trimmed;
+        return ($rootIndex >= 1 && $rootIndex <= count($repoRoots)) ? $rootIndex : null;
+    }
+
+    $lookup = buildRepoRootSelectorLookup($repoRoots);
+    $token = normalizeRepoRootSelectorToken($trimmed);
+    if ($token === '') {
+        return null;
+    }
+
+    return $lookup[$token] ?? null;
+}
+
+function normalizeConfiguredRepoMetaOverrides(mixed $overrides, array $repoRoots = []): array
+{
+    if (!is_array($overrides)) {
+        return [];
+    }
+
+    $normalized = [];
+
+    foreach ($overrides as $key => $entry) {
+        $root = null;
+        $path = '';
+        $options = [];
+
+        if (is_string($key) && is_array($entry)) {
+            $selectorParts = preg_split('#[\\/]+#', trim($key)) ?: [];
+            $selectorParts = array_values(array_filter($selectorParts, static fn (string $part): bool => $part !== ''));
+            if ($selectorParts !== []) {
+                $candidateRoot = resolveRepoRootSelector((string) ($selectorParts[0] ?? ''), $repoRoots);
+                if ($candidateRoot !== null) {
+                    $root = $candidateRoot;
+                    array_shift($selectorParts);
+                    $path = implode('/', $selectorParts);
+                    $options = $entry;
+                }
+            }
+        }
+
+        if (is_array($entry) && $root === null) {
+            $candidateRootRaw = $entry['root'] ?? null;
+            $candidateRoot = null;
+            if (is_string($candidateRootRaw) || is_int($candidateRootRaw)) {
+                $candidateRoot = resolveRepoRootSelector($candidateRootRaw, $repoRoots);
+            }
+            $candidatePath = normalizeRepoMetaOverridePath((string) ($entry['path'] ?? ''));
+            if ($candidateRoot !== null && $candidatePath !== '') {
+                $root = $candidateRoot;
+                $path = $candidatePath;
+                $entryOptions = $entry['options'] ?? [];
+                $options = is_array($entryOptions) ? $entryOptions : [];
+            }
+        }
+
+        if ($root === null) {
+            continue;
+        }
+
+        $path = normalizeRepoMetaOverridePath($path);
+        if ($path === '') {
+            continue;
+        }
+
+        $selector = $root . '/' . $path;
+        $rootLabel = formatRepoRootLabel($repoRoots, $root - 1);
+        $rootSelectorSlug = '';
+        $rootDefinition = $repoRoots[$root - 1] ?? null;
+        if ($rootDefinition instanceof RepoRoot) {
+            $rootSelectorSlug = $rootDefinition->getSelectorSlug();
+        }
+        $normalized[$selector] = [
+            'root' => $root,
+            'root_label' => $rootLabel,
+            'root_slug' => $rootSelectorSlug,
+            'path' => $path,
+            'selector' => $selector,
+            'options' => $options,
+        ];
+    }
+
+    return $normalized;
+}
+
+function getConfiguredRepoMetaOverrides(): array
+{
+    $config = loadConfiguredAppConfig();
+    $metaConfig = $config['repo_meta'] ?? [];
+
+    if (!is_array($metaConfig)) {
+        return [];
+    }
+
+    return normalizeConfiguredRepoMetaOverrides($metaConfig['overrides'] ?? [], getConfiguredRepoRoots());
 }
 
 function getRepoRootPaths(array $repoRoots): array
@@ -87,8 +236,8 @@ function resolveRepoSelector(string $selector, array $repos, array $repoRoots): 
         return null;
     }
 
-    $rootIndex = (int) ($parts[0] ?? 0);
-    if ($rootIndex < 1 || $rootIndex > count($repoRoots)) {
+    $rootIndex = resolveRepoRootSelector((string) ($parts[0] ?? ''), $repoRoots);
+    if ($rootIndex === null) {
         return null;
     }
 
@@ -305,6 +454,7 @@ function runCliMode(array $argv): void
             echo "Usage:\n";
             echo "  php index.php --list\n";
             echo "  php index.php --repo \"1/apples/cider apples/sour two\" --command branch\n";
+            echo "  php index.php --repo \"fruits-fixtures/apples/cider apples/sour two\" --command branch\n";
             echo "  php index.php --repo \"1/apples/cider apples/sour two\" --command log\n";
             echo "  php index.php --repo \"1/apples/cider apples/sour two\" --command tree\n";
             return;

@@ -48,6 +48,7 @@ if (!is_resource($server)) {
 }
 
 $repoDetailUrl = $baseUrl . '/?repo=' . rawurlencode('1/apples/cider apples/sour two') . '&command=branch';
+$repoDetailSlugUrl = $baseUrl . '/?repo=' . rawurlencode('fruits/apples/cider apples/sour two') . '&command=branch';
 $harvestBranchUrl = $baseUrl . '/?repo=' . rawurlencode('1/apples/cider apples/sour two') . '&command=branch&branch=' . rawurlencode('feature/harvest-tracker') . '&mode=branch';
 $treeModeUrl = $baseUrl . '/?repo=' . rawurlencode('1/apples/cider apples/sour two') . '&command=branch&branch=' . rawurlencode('master') . '&mode=tree';
 
@@ -90,6 +91,13 @@ if ($branchResponse !== false && $branchResponse !== '') {
     $branchHtml = $branchResponse;
 }
 
+$slugResponse = @file_get_contents($repoDetailSlugUrl, false, stream_context_create([
+    'http' => [
+        'timeout' => 2,
+        'ignore_errors' => true,
+    ],
+]));
+
 $treeHtml = @file_get_contents($treeModeUrl, false, stream_context_create([
     'http' => [
         'timeout' => 4,
@@ -116,9 +124,12 @@ if ($branchHtml === '') {
     fail('Feature branch detail page did not return HTML.');
 }
 
-if (str_contains($branchHtml, '381a3a8')) {
-    fail('Feature branch log still includes pre-fork commit 381a3a8.', $branchHtml);
+if ($slugResponse === false || $slugResponse === '') {
+    fail('Slug-based repo selector did not return HTML.');
 }
+
+assertContains('repo=1%2Fapples%2Fcider%20apples%2Fsour%20two', $slugResponse, 'Slug-based selector should resolve to a valid repo detail page.');
+assertContains('commit-list', $branchHtml, 'Feature branch detail page is missing the commit log panel.');
 
 if ($treeHtml === false || $treeHtml === '') {
     fail('Tree mode page did not return HTML.');

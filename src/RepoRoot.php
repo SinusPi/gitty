@@ -6,6 +6,7 @@ final class RepoRoot
 {
     public function __construct(
         private string $path,
+        private string $slug = '',
         private string $name = '',
         private string $description = '',
     ) {
@@ -19,6 +20,23 @@ final class RepoRoot
     public function getName(): string
     {
         return trim($this->name);
+    }
+
+    public function getSlug(): string
+    {
+        return trim($this->slug);
+    }
+
+    public function getSelectorSlug(): string
+    {
+        $explicitSlug = normalizeRepoRootSelectorToken($this->getSlug());
+        if ($explicitSlug !== '') {
+            return $explicitSlug;
+        }
+
+        $normalized = rtrim(str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $this->getPath()), DIRECTORY_SEPARATOR);
+        $fallback = basename($normalized);
+        return normalizeRepoRootSelectorToken($fallback);
     }
 
     public function getDescription(): string
@@ -45,7 +63,7 @@ final class RepoRoot
 
     public function withNormalizedPath(): self
     {
-        return new self($this->getPath(), $this->getName(), $this->getDescription());
+        return new self($this->getPath(), $this->getSlug(), $this->getName(), $this->getDescription());
     }
 
     public static function fromConfigValue(mixed $root): ?self
@@ -58,6 +76,7 @@ final class RepoRoot
 
             return (new self(
                 $path,
+                trim((string) ($root['slug'] ?? '')),
                 trim((string) ($root['name'] ?? '')),
                 trim((string) ($root['description'] ?? '')),
             ))->withNormalizedPath();

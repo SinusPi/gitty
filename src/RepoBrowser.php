@@ -106,8 +106,8 @@ final class RepoBrowser
             return null;
         }
 
-        $rootIndex = (int) ($parts[0] ?? 0);
-        if ($rootIndex < 1 || $rootIndex > count($this->configuredRoots)) {
+        $rootIndex = resolveRepoRootSelector((string) ($parts[0] ?? ''), $this->configuredRoots);
+        if ($rootIndex === null) {
             return null;
         }
 
@@ -534,9 +534,9 @@ final class RepoBrowser
         $branchCommits = [];
         $branchGraph = '';
         if ($selectedMode === 'tree') {
-            $branchGraph = $repo->getBranchGraph($selectedBranch, 120, $repoData['branches'], $repoData['head_branch']);
+            $branchGraph = $repo->getBranchGraph($selectedBranch, 120);
         } else {
-            $branchCommits = $repo->getBranchCommits($selectedBranch, 30, $repoData['branches'], $repoData['head_branch']);
+            $branchCommits = $repo->getBranchCommits($selectedBranch, 30);
         }
         $selectedBranchLoadDurationMs = (microtime(true) - $selectedBranchLoadStartedAt) * 1000;
 

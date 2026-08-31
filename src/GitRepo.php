@@ -83,7 +83,7 @@ final class GitRepo
         return trim($output);
     }
 
-    public function getBranchCommits(string $branch, int $limit = 30, array $knownBranches = [], ?string $knownHeadBranch = null): array
+    public function getBranchCommits(string $branch, int $limit = 30): array
     {
         $ref = $branch !== '' ? $branch : 'HEAD';
         [$headOutput, $headStatus] = GitCommandRunner::runWithStatus($this->path, ['rev-parse', '--verify', 'HEAD']);
@@ -92,23 +92,6 @@ final class GitRepo
         }
 
         $logArgs = ['log', '--first-parent', '--pretty=format:%H%x1f%an%x1f%ad%x1f%D%x1f%s', '--date=iso-strict', '-n', (string) $limit, $ref];
-
-        /*
-        $headRef = $knownHeadBranch ?? $this->getHeadBranch();
-        if ($headRef !== '' && $ref !== $headRef) {
-            $otherBranches = array_values(array_filter(
-                $knownBranches !== [] ? $knownBranches : $this->getBranches(),
-                static fn (string $candidate): bool => $candidate !== '' && $candidate !== $ref
-            ));
-
-            if ($otherBranches !== []) {
-                $logArgs = ['log', '--first-parent', '--pretty=format:%H%x1f%an%x1f%ad%x1f%D%x1f%s', '--date=iso-strict', '-n', (string) $limit, $ref, '--not'];
-                foreach ($otherBranches as $otherBranch) {
-                    $logArgs[] = $otherBranch;
-                }
-            }
-        }
-        */
 
         [$output, $status] = GitCommandRunner::runWithStatus($this->path, $logArgs);
 
@@ -137,7 +120,7 @@ final class GitRepo
         return $commits;
     }
 
-    public function getBranchGraph(string $branch, int $limit = 120, array $knownBranches = [], ?string $knownHeadBranch = null): string
+    public function getBranchGraph(string $branch, int $limit = 120): string
     {
         $ref = $branch !== '' ? $branch : 'HEAD';
         [$headOutput, $headStatus] = GitCommandRunner::runWithStatus($this->path, ['rev-parse', '--verify', 'HEAD']);
@@ -153,22 +136,7 @@ final class GitRepo
         '--pretty=%C(auto)%h %Cblue%an%Creset %Cgreen%ad%Creset%C(auto)%d %s',
         '-n', (string) $limit,
         $ref];
-/*
-        $headRef = $knownHeadBranch ?? $this->getHeadBranch();
-        if ($headRef !== '' && $ref !== $headRef) {
-            $otherBranches = array_values(array_filter(
-                $knownBranches !== [] ? $knownBranches : $this->getBranches(),
-                static fn (string $candidate): bool => $candidate !== '' && $candidate !== $ref
-            ));
 
-            if ($otherBranches !== []) {
-                $logArgs = ['log', '--graph', '--decorate', '--oneline', '--color=always', '--first-parent', '-n', (string) $limit, $ref, '--not'];
-                foreach ($otherBranches as $otherBranch) {
-                    $logArgs[] = $otherBranch;
-                }
-            }
-        }
-*/
         [$output, $status] = GitCommandRunner::runWithStatus($this->path, $logArgs);
         if ($status !== 0) {
             return '';
@@ -193,7 +161,7 @@ final class GitRepo
         $commitsByBranch = [];
         if ($includeAllBranchCommits) {
             foreach ($branches as $branch) {
-                $commitsByBranch[$branch] = $this->getBranchCommits($branch, 30, $branches, $headBranch);
+                $commitsByBranch[$branch] = $this->getBranchCommits($branch, 30);
             }
         }
 
